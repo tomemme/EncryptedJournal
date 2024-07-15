@@ -18,7 +18,6 @@ An encrypted journal application written in Python using Tkinter for the GUI and
 1. Clone the Repository - git clone https://github.com/tomemme/encrypted-journal.git
     cd encrypted-journal
 2. Install Dependencies:
-- Make sure you have Python 3.6+ installed.
 - Install the required Python packages: pip install cryptography
 
 # Usage
