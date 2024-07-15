@@ -1,25 +1,22 @@
-Encrypted Journal
+# Encrypted Journal
 An encrypted journal application written in Python using Tkinter for the GUI and cryptography for encryption. This application allows you to securely save, load, and delete journal entries with encryption.
 
-Features
+# Features
 Save Journal Entries: Encrypt and save your journal entries to a .json file.
 Load Journal Entries: Decrypt and load your journal entries from the .json file.
 Delete Journal Entries: Delete specific journal entries from the .json file.
 Days Since Last Entry: Display the number of days since the last journal entry was made.
-Requirements
-Python 3.6+
-The following Python packages:
-tkinter
-cryptography
-json
-Installation
-Clone the Repository:
+# Requirements
+- Python 3.6+
+- The following Python packages:
+    - tkinter
+    cryptography
+    json
+# Installation
+1. Clone the Repository - git clone https://github.com/tomemme/encrypted-journal.git
+    cd encrypted-journal
 
-bash
-Copy code
-git clone https://github.com/yourusername/encrypted-journal.git
-cd encrypted-journal
-Install Dependencies:
+2. Install Dependencies:
 
 Make sure you have Python 3.6+ installed.
 Install the required Python packages:
