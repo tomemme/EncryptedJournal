@@ -62,6 +62,9 @@ Journal entries are stored in a .json file, where each entry is encrypted. The .
         "entry": "another_encrypted_entry_here"
     }
 ]
+
+![GUI](https://github.com/user-attachments/assets/bcbc7b89-7898-482e-930f-be9540c3c833)
+
 # Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
 
