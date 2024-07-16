@@ -48,6 +48,8 @@ The main script for the encrypted journal application. It uses the following key
 Encryption and Decryption
 The application uses the cryptography library for encryption and decryption of journal entries. Password-based key derivation is used to securely generate encryption keys from user passwords.
 
+![GUI](https://github.com/user-attachments/assets/bcbc7b89-7898-482e-930f-be9540c3c833)
+
 # JSON File Storage
 Journal entries are stored in a .json file, where each entry is encrypted. The .json file structure allows for easy management and retrieval of entries based on their dates.
 
@@ -62,8 +64,6 @@ Journal entries are stored in a .json file, where each entry is encrypted. The .
         "entry": "another_encrypted_entry_here"
     }
 ]
-
-![GUI](https://github.com/user-attachments/assets/bcbc7b89-7898-482e-930f-be9540c3c833)
 
 # Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
