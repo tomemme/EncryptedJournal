@@ -1,5 +1,5 @@
 # Encrypted Journal
-An encrypted journal application written in Python using Tkinter for the GUI and cryptography for encryption. This application allows you to securely save, load, and delete journal entries with encryption, hashing and salt.
+An encrypted journal application written in Python using Tkinter for the GUI and cryptography for encryption. This application allows you to securely save, load, and delete journal entries with encryption. Your password is hashed with SHA512 after you supply it to the program and the hash expires after 5 mins and you will need to provide your password again. The entries are encrypted using AES encryption combined with a derived key made by using the hashed password and salt again.
 
 # Features
 - Encrypt and save your journal entries to a compressed .json file.
