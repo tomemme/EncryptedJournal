@@ -300,9 +300,6 @@ class JournalApp:
         self.treeview.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.treeview.yview)
 
-        self.days_since_label = ttk.Label(self.root, text=self.days_since_last_entry(), background='lightgrey')
-        self.days_since_label.pack(pady=5)
-
         self.update_treeview()
 
 if __name__ == "__main__":
