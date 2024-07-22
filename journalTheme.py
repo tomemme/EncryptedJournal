@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import getpass
 
 class JournalApp:
-    SESSION_TIMEOUT = 3000  # 5 minutes
+    SESSION_TIMEOUT = 300  # 5 minutes
 
     def __init__(self, root):
         self.root = root
