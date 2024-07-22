@@ -266,7 +266,7 @@ class JournalApp:
         self.text_entry = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, width=65, height=20, bg='lightgrey', fg='black')
         self.text_entry.pack()
 
-        text_font = font.Font(family="Verdana", size=14)
+        text_font = font.Font(family="Verdana", size=10)
         self.text_entry.configure(font=text_font)
         self.text_entry.focus_set()
         self.text_entry.config(insertwidth=5, insertbackground='black')
