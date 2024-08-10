@@ -264,10 +264,10 @@ class JournalApp:
                 grouped_data[year_month] = []
             grouped_data[year_month].append(date_str)
 
-        sorted_year_months = sorted(grouped_data.keys(), key=lambda ym: datetime.strptime(ym, "%Y-%m"))
+        sorted_year_months = sorted(grouped_data.keys(), key=lambda ym: datetime.strptime(ym, "%Y-%m"), reverse=True)
 
         for year_month in sorted_year_months:
-            dates = sorted(grouped_data[year_month], key=lambda date: datetime.strptime(date, "%Y-%m-%d"))
+            dates = sorted(grouped_data[year_month], key=lambda date: datetime.strptime(date, "%Y-%m-%d"), reverse=True)
             parent = self.treeview.insert("", "end", text=year_month, open=False)
             for date in dates:
                 self.treeview.insert(parent, "end", text=date)
