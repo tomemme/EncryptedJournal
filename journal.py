@@ -232,11 +232,22 @@ class JournalApp:
             if not selected_date:
                 messagebox.showwarning("Warning", "No date selected.")
                 return
+            
+            # confirm you want to delete and entry
+            confirm = messagebox.askyesno("Confirm Delete", f"Are your sure you want to delete the entry for {selected_date}?")
+            if not confirm:
+                return; 
+        
             data = self.load_json()
             new_data = [entry for entry in data if entry["date"] != selected_date]
             if len(new_data) == len(data):
                 messagebox.showwarning("Warning", "No entry found for the given date.")
             else:
+                if os.name == 'nt':
+                    os.chmod(self.filename, 0o666)  #windows make it writable
+                else:
+                    os.chmod(self.filename, 0o6000) # unix make it writable by owner
+
                 self.save_json(new_data)
                 self.is_modified = False  # Reset the modified flag after deleting
                 messagebox.showinfo("Success", "Journal entry deleted successfully.")
