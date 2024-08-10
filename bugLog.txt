@@ -1,0 +1,2 @@
+
+Found a new bug that wont let me delete and entry, got permission denied.
