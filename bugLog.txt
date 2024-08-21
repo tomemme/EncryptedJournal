@@ -2,6 +2,8 @@ bug fixed - Found a new bug that wont let me delete and entry, got permission de
 feature - added a confimation when trying to delete and entry.
 
 Running Task
-create a button to toggle light or dark mode.
+-create a button to toggle light or dark mode.
+-create tags in the treeview so you can find entries easier? (makes info more public possibly...)
 
 Bugs to fix.
+when you load an entry it automatically thinks the text entry has changed. adds a pop up before every load.

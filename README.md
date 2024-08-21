@@ -8,6 +8,9 @@ An encrypted journal application written in Python using Tkinter for the GUI and
 - Display the number of days since the last journal entry was made.
 - Clear text entry widget.
 
+# bug report
+- i type after loading an entry and in a rush to save the entry before timer, i hit load and it deleted my entry need to add in a safety feature.
+
 # Requirements
 - Python 3.6+
 
