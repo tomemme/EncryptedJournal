@@ -9,6 +9,9 @@ import sys
 import gzip
 import json
 from datetime import datetime, timedelta
+import enchant
+import re
+import string
 
 class SecureJournalApp:
     def __init__(self, root):
@@ -22,6 +25,7 @@ class SecureJournalApp:
         self.entry_loaded = False
         self.failed_attempts = 0
         self.max_attempts = 5
+        self.dictionary = enchant.Dict("en_US")
         self.setup_ui()
         self.apply_theme()
 
@@ -47,10 +51,18 @@ class SecureJournalApp:
         self.text_entry = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD, width=65, height=20)
         self.text_entry.pack()
 
-        text_font = font.Font(family="Verdana", size=10)
+        text_font = font.Font(family="Verdana", size=12)
         self.text_entry.configure(font=text_font)
         self.text_entry.focus_set()
         self.text_entry.config(insertwidth=5, insertbackground='black')
+
+        # spell check tagging
+        self.text_entry.tag_config("misspelled", foreground="red", underline=True)
+        self.text_entry.bind('<KeyRelease>', lambda event: self.check_spelling())
+        self.text_entry.bind('<Button-3>', self.show_suggestions)
+        # For Windows and Linux (Button-3), and macOS (Control-Button-1)
+        self.text_entry.bind('<Button-2>', self.show_suggestions)
+
 
         # Label to display days since last entry
         self.days_since_label = ttk.Label(self.root,text=self.days_since_last_entry())
@@ -139,6 +151,65 @@ class SecureJournalApp:
                 "Error",
                 "Unable to load theme. Make sure the azure.tcl file is in the correct directory."
             )
+
+    def check_spelling(self):
+        try:
+            text_content = self.text_entry.get("1.0", tk.END)
+            self.text_entry.tag_remove("misspelled", "1.0", tk.END)
+            words_positions = self.get_words_positions(text_content)
+            for word, start_idx, end_idx in words_positions:
+                # Strip punctuation for spell checking
+                stripped_word = word.strip(string.punctuation)
+                if stripped_word and not self.dictionary.check(stripped_word):
+                    self.text_entry.tag_add("misspelled", start_idx, end_idx)
+        except enchant.errors.DictNotFoundError:
+            messagebox.showerror("Error", "Dictionary not found. Please ensure Enchant is properly installed.")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred during spell checking: {e}")
+    
+    def get_words_positions(self, text):
+        words_positions = []
+        # Use regex to find words, including apostrophes
+        pattern = re.compile(r"\b[\w']+\b")
+        for match in pattern.finditer(text):
+            word = match.group()
+            start_index = f"1.0 + {match.start()} chars"
+            end_index = f"1.0 + {match.end()} chars"
+            words_positions.append((word, start_index, end_index))
+        return words_positions
+    
+    def show_suggestions(self, event):
+        try:
+            index = self.text_entry.index(f"@{event.x},{event.y}")
+            tags = self.text_entry.tag_names(index)
+            if "misspelled" in tags:
+                # Get the range of the misspelled word
+                ranges = self.text_entry.tag_prevrange("misspelled", index)
+                if ranges:
+                    word_start, word_end = ranges
+                    misspelled_word = self.text_entry.get(word_start, word_end)
+                    # Strip punctuation for suggestions
+                    stripped_word = misspelled_word.strip(string.punctuation)
+                    suggestions = self.dictionary.suggest(stripped_word)
+                    menu = tk.Menu(self.root, tearoff=0)
+                    if suggestions:
+                        for suggestion in suggestions[:5]:
+                            menu.add_command(
+                                label=suggestion,
+                                command=lambda s=suggestion: self.replace_word(word_start, word_end, suggestion)
+                            )
+                    else:
+                        menu.add_command(label="No suggestions available")
+                    menu.post(event.x_root, event.y_root)
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+
+    def replace_word(self, start, end, replacement):
+        self.text_entry.delete(start, end)
+        self.text_entry.insert(start, replacement)
+        # Re-run spell check to update highlights
+        self.check_spelling()
+
 
     def on_treeview_select(self, event):
         self.last_action_time = datetime.now()
