@@ -26,8 +26,11 @@ class SecureJournalApp:
         self.failed_attempts = 0
         self.max_attempts = 5
         self.dictionary = enchant.Dict("en_US")
+        self.current_theme = "dark"
         self.setup_ui()
+        self.load_theme_file()
         self.apply_theme()
+        
 
     def setup_ui(self):
         # Frame for the date selection
@@ -80,6 +83,10 @@ class SecureJournalApp:
         delete_button.grid(row=1, column=2, padx=5)
         clear_button = ttk.Button(button_frame, text="Clear Entry", command=self.clear_journal_entry)
         clear_button.grid(row=1, column=3, padx=5)
+        # Theme Toggle Button
+        #button_text = "Light" if self.current_theme == 'dark' else "Dark"
+        theme_button = ttk.Button(button_frame, text="light/dark", command=self.toggle_theme)
+        theme_button.grid(row=1, column=5, padx=5)
 
         treeview_frame = ttk.Frame(self.root)
         treeview_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
@@ -137,20 +144,48 @@ class SecureJournalApp:
 
     def apply_theme(self):
         try:
+            # Set the theme to current_theme
+            self.root.tk.call('set_theme', self.current_theme)
+        except tk.TclError as e:
+            print(f"Error applying theme: {e}")
+            messagebox.showerror(
+                "Error",
+                "Unable to apply theme. Ensure that the theme is loaded correctly."
+            )
+    
+    def load_theme_file(self):
+        try:
             # Construct the full path to the azure.tcl file using resource_path
             azure_tcl_path = self.resource_path('azure.tcl')
 
             # Source the azure.tcl file
             self.root.tk.call('source', azure_tcl_path)
-
-            # Set the theme to 'azure'
-            self.root.tk.call('set_theme', 'dark')  # Change to 'light' for light mode
         except tk.TclError as e:
-            print(f"Error loading theme: {e}")
+            print(f"Error loading theme file: {e}")
             messagebox.showerror(
                 "Error",
-                "Unable to load theme. Make sure the azure.tcl file is in the correct directory."
+                "Unable to load theme file. Make sure the azure.tcl file is in the correct directory."
             )
+    
+    def toggle_theme(self):
+        # Store current geometry (width, height, and position)
+        current_geometry = self.root.geometry()
+        
+        # Toggle current_theme
+        if self.current_theme == 'dark':
+            self.current_theme = 'light'
+        else:
+            self.current_theme = 'dark'
+
+        # Apply the new theme
+        self.apply_theme()
+
+        # Restore the original geometry to prevent unwanted resizing
+        self.root.geometry(current_geometry)
+
+        # Optionally, force an update so the changes are rendered immediately
+        self.root.update_idletasks()
+
 
     def check_spelling(self):
         try:
