@@ -231,7 +231,7 @@ class SecureJournalApp:
                         for suggestion in suggestions[:5]:
                             menu.add_command(
                                 label=suggestion,
-                                command=lambda s=suggestion: self.replace_word(word_start, word_end, suggestion)
+                                command=lambda s=suggestion: self.replace_word(word_start, word_end, s)
                             )
                     else:
                         menu.add_command(label="No suggestions available")
