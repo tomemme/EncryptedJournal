@@ -12,9 +12,6 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
 - **Days Since Last Entry**: Displays the time since your last journal entry.
 - **Clear Entry**: Reset the text and date fields with a single click.
 
-# bug report
-- i type after loading an entry and in a rush to save the entry before timer, i hit load and it deleted my entry need to add in a safety feature.
-
 # Requirements
 - Python 3.6+
 - Dependencies:
@@ -23,7 +20,7 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
   - `pywin32` (optional, for Windows file permissions)
 
 # Installation
-1. Clone the Repository - git clone https://github.com/tomemme/encrypted-journal.git
+1. Clone the Repository
     cd encrypted-journal
 
 ![GUI](https://github.com/tomemme/EncryptedJournal/blob/main/ThemeGui.PNG)
