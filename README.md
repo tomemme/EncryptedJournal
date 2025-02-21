@@ -1,58 +1,37 @@
 # Encrypted Journal
-An encrypted journal application written in Python using Tkinter for the GUI and cryptography for encryption. This application allows you to securely save, load, and delete journal entries with encryption. Your password is hashed with SHA512 after you supply it to the program and the hash expires after 5 mins and you will need to provide your password again. The entries are encrypted using AES encryption combined with a derived key made by using the hashed password and salt again.
+A cross-platform encrypted journal application built with Python, Tkinter, and the `cryptography` library. Securely write, save, load, and delete journal entries with AES-GCM encryption, featuring a modern GUI, spell checking, and session timeout for added security. Entries are stored in a compressed JSON file (`journal.json.gz`) that works seamlessly across Windows, macOS, and Linux.
 
 # Features
-- Encrypt and save your journal entries to a compressed .json file.
-- Decrypt and load your journal entries from the compressed .json file.
-- Delete specific journal entries from the compressed .json file.
-- Display the number of days since the last journal entry was made.
-- Clear text entry widget.
+- **Secure Encryption**: Entries are encrypted using AES-GCM with keys derived via Scrypt from your password, using cryptographically secure salts and nonces.
+- **Save and Load Entries**: Encrypt and save entries to `journal.json.gz`, and decrypt them by date using a treeview interface.
+- **Delete Entries**: Remove specific entries with confirmation prompts.
+- **Spell Checking**: Real-time spell checking with right-click suggestions (powered by `pyenchant`).
+- **Session Security**: 5-minute session timeout requires re-entering your password, with secure password cleanup from memory.
+- **Cross-Platform**: Works on Windows, macOS, and Linux with consistent file handling and permissions.
+- **Theming**: Toggle between light and dark themes using the `azure.tcl` theme file.
+- **Days Since Last Entry**: Displays the time since your last journal entry.
+- **Clear Entry**: Reset the text and date fields with a single click.
 
 # bug report
 - i type after loading an entry and in a rush to save the entry before timer, i hit load and it deleted my entry need to add in a safety feature.
 
 # Requirements
 - Python 3.6+
+- Dependencies:
+  - `cryptography` (for encryption/decryption)
+  - `pyenchant` (for spell checking)
+  - `pywin32` (optional, for Windows file permissions)
 
 # Installation
 1. Clone the Repository - git clone https://github.com/tomemme/encrypted-journal.git
     cd encrypted-journal
-2. Install Python Dependencies:
-- pip install cryptography
-- pip install tkcalendar
-
-# Usage
-1. Run the Application: python journal.py
-2. Enter Your Password:
-- When prompted, enter a password for encryption and decryption. Ensure you remember this password, as you will need it to decrypt your journal entries.
-3. Save a Journal Entry:
-- Write your journal entry in the text box.
-- Populate date if your entry isnt for the current day and you cant load an entry.
-- Click the "Save Entry" button to encrypt and save the entry.
-4. Load a Journal Entry:
-- Select a date from the list and click the "Load Entry" button to decrypt and load the entry.
-5. Delete a Journal Entry:
--Select a date from the list and click the "Delete Entry" button to delete the entry. 
-
-# Tkinter GUI: Provides the user interface for interacting with the journal.
-Encryption and Decryption
-The application uses the cryptography library for encryption and decryption of journal entries. Password-based key derivation is used to securely generate encryption keys from user passwords.
 
 ![GUI](https://github.com/tomemme/EncryptedJournal/blob/main/ThemeGui.PNG)
 
-# JSON File Storage
-Journal entries are stored in a .json file, where each entry is encrypted. The .json file structure allows for easy management and retrieval of entries based on their dates.
-
 # Example JSON File Structure
 [
-    {
-        "date": "2024-07-12",
-        "entry": "encrypted_entry_here"
-    },
-    {
-        "date": "2024-07-13",
-        "entry": "another_encrypted_entry_here"
-    }
+    {"date": "2025-02-20", "entry": "base64_encoded_encrypted_data"},
+    {"date": "2025-02-21", "entry": "another_base64_encoded_encrypted_data"}
 ]
 
 # Contributing
