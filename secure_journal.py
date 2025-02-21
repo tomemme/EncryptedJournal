@@ -12,6 +12,25 @@ from datetime import datetime, timedelta
 import enchant
 import re
 import string
+import secrets
+import gc
+from contextlib import contextmanager
+
+# Windows-specific imports for file permissions
+try:
+    import win32security
+    import ntsecuritycon as con
+except ImportError:
+    win32security = None
+    con = None
+
+@contextmanager
+def secure_password(password):
+    try:
+        yield password
+    finally:
+        del password
+        gc.collect()
 
 class SecureJournalApp:
     def __init__(self, root):
@@ -274,14 +293,14 @@ class SecureJournalApp:
             raise
 
     def encrypt_message(self, message, password):
-        salt = os.urandom(16)
+        salt = secrets.token_bytes(16)  # Cryptographically secure random bytes
         try:
             key = self.derive_key(password, salt)
         except Exception:
             messagebox.showerror("Error", "Incorrect password.")
             return None
         aesgcm = AESGCM(key)
-        nonce = os.urandom(12)  # Standard nonce size for AESGCM
+        nonce = secrets.token_bytes(12)  # Cryptographically secure nonce
         ciphertext = aesgcm.encrypt(nonce, message.encode(), None)
         return base64.urlsafe_b64encode(salt + nonce + ciphertext).decode('utf-8')
 
@@ -303,26 +322,50 @@ class SecureJournalApp:
             raise ValueError("Incorrect password or corrupted data.")
 
     def save_json(self, data):
-        # Secure file handling with restricted permissions
-        with gzip.open(self.filename, "wt", encoding="utf-8") as file:
-            json.dump(data, file, indent=4)
-        # Adjust file permissions
         try:
-            if os.name == 'nt':
-                # On Windows, file permissions are handled differently
-                # Ensure the file is only accessible by the owner
-                import win32security
-                import ntsecuritycon as con
-                user, domain, type = win32security.LookupAccountName("", os.getlogin())
-                sd = win32security.GetFileSecurity(self.filename, win32security.DACL_SECURITY_INFORMATION)
-                dacl = win32security.ACL()
-                dacl.AddAccessAllowedAce(win32security.ACL_REVISION, con.FILE_GENERIC_READ | con.FILE_GENERIC_WRITE, user)
-                sd.SetSecurityDescriptorDacl(1, dacl, 0)
-                win32security.SetFileSecurity(self.filename, win32security.DACL_SECURITY_INFORMATION, sd)
+            # Ensure the file is writable by resetting permissions if it exists
+            if os.path.exists(self.filename):
+                if os.name == 'nt' and win32security:
+                    try:
+                        user, domain, type = win32security.LookupAccountName("", os.getlogin())
+                        sd = win32security.GetFileSecurity(self.filename, win32security.DACL_SECURITY_INFORMATION)
+                        dacl = win32security.ACL()
+                        dacl.AddAccessAllowedAce(win32security.ACL_REVISION, 
+                                               con.FILE_ALL_ACCESS, user)  # Full access temporarily
+                        sd.SetSecurityDescriptorDacl(1, dacl, 0)
+                        win32security.SetFileSecurity(self.filename, 
+                                                    win32security.DACL_SECURITY_INFORMATION, sd)
+                    except Exception as perm_error:
+                        raise PermissionError(f"Failed to reset file permissions on Windows: {perm_error}")
+                else:
+                    # On macOS/Linux, ensure the file is writable by the owner
+                    os.chmod(self.filename, 0o600)
+
+            # Write the file
+            with gzip.open(self.filename, "wt", encoding="utf-8") as file:
+                json.dump(data, file, indent=4)
+
+            # Set restrictive permissions after writing
+            if os.name == 'nt' and win32security:
+                try:
+                    user, domain, type = win32security.LookupAccountName("", os.getlogin())
+                    sd = win32security.GetFileSecurity(self.filename, win32security.DACL_SECURITY_INFORMATION)
+                    dacl = win32security.ACL()
+                    dacl.AddAccessAllowedAce(win32security.ACL_REVISION, 
+                                           con.FILE_GENERIC_READ | con.FILE_GENERIC_WRITE, user)
+                    sd.SetSecurityDescriptorDacl(1, dacl, 0)
+                    win32security.SetFileSecurity(self.filename, 
+                                                win32security.DACL_SECURITY_INFORMATION, sd)
+                except Exception as perm_error:
+                    messagebox.showwarning("Warning", f"Failed to set restrictive permissions on Windows: {perm_error}")
             else:
+                # On macOS/Linux, set owner-only read/write
                 os.chmod(self.filename, 0o600)
+
+        except PermissionError as e:
+            raise PermissionError(f"Permission denied when accessing {self.filename}: {e}")
         except Exception as e:
-            messagebox.showwarning("Warning", f"Failed to set file permissions: {e}")
+            raise Exception(f"Failed to save JSON data: {e}")
 
     def load_json(self):
         if os.path.exists(self.filename):
@@ -332,43 +375,72 @@ class SecureJournalApp:
 
     def save_journal_entry(self):
         self.last_action_time = datetime.now()
+        
+        # Check session timeout and password availability
         if self.check_session_timeout() or not self.hashed_password:
             password = self.prompt_for_password()
             if password is None:
                 return
-            self.hashed_password = password
+            self.hashed_password = password  # Maintain compatibility with other methods
+        
+        # Use secure_password context manager for the entire operation
+        with secure_password(self.hashed_password) as pwd:
+            try:
+                # Get and validate inputs
+                journal_entry = self.text_entry.get("1.0", tk.END).strip()
+                date_str = self.date_entry.get().strip()
 
-        journal_entry = self.text_entry.get("1.0", tk.END).strip()
-        date_str = self.date_entry.get().strip()
+                if not journal_entry:
+                    messagebox.showwarning("Warning", "Journal entry cannot be empty.")
+                    return
 
-        if journal_entry:
-            if not date_str:
-                date_str = datetime.now().strftime("%Y-%m-%d")
-            encrypted_entry = self.encrypt_message(journal_entry, self.hashed_password)
-            if encrypted_entry is None:
-                self.hashed_password = None
+                # Validate and set date
+                if not date_str:
+                    date_str = datetime.now().strftime("%Y-%m-%d")
+                elif not self.validate_date(date_str):
+                    messagebox.showerror("Error", "Invalid date format. Use YYYY-MM-DD")
+                    return
+
+                # Encrypt with improved security (using secrets instead of os.urandom)
+                encrypted_entry = self.encrypt_message(journal_entry, pwd)
+                if encrypted_entry is None:
+                    return  # Encryption failed, likely due to wrong password
+
+                entry = {"date": date_str, "entry": encrypted_entry}
+                data = self.load_json()
+
+                # Update or append entry
+                for existing_entry in data:
+                    if existing_entry["date"] == date_str:
+                        existing_entry["entry"] = encrypted_entry
+                        break
+                else:
+                    data.append(entry)
+
+                # Save with secure file handling
+                self.save_json(data)
+                messagebox.showinfo("Success", "Your journal entry has been encrypted and saved.")
+                
+                # Update UI
+                self.clear_journal_entry()
+                self.update_treeview()
+                self.days_since_label.config(text=self.days_since_last_entry())
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save entry: {str(e)}")
                 return
-            entry = {"date": date_str, "entry": encrypted_entry}
+            finally:
+                # Ensure password is cleared even on error
+                self.hashed_password = None
+    
+    # Add this helper method for date validation
+    def validate_date(self, date_str):
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
 
-            data = self.load_json()
-            for existing_entry in data:
-                if existing_entry["date"] == date_str:
-                    existing_entry["entry"] = encrypted_entry
-                    break
-            else:
-                data.append(entry)
-
-            self.save_json(data)
-            messagebox.showinfo("Success", "Your journal entry has been encrypted and saved.")
-            self.clear_journal_entry()
-            self.update_treeview()
-            self.days_since_label.config(text=self.days_since_last_entry())
-
-        else:
-            messagebox.showwarning("Warning", "Journal entry cannot be empty.")
-
-        # Clear password from memory
-        self.hashed_password = None
 
     def load_journal_entry(self):
         self.last_action_time = datetime.now()
