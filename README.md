@@ -23,7 +23,7 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
 1. Clone the Repository
     cd encrypted-journal
 
-![GUI](https://github.com/tomemme/EncryptedJournal/blob/main/ThemeGui.PNG)
+![GUI](https://github.com/tomemme/EncryptedJournal/blob/main/duoTheme.PNG)
 
 # Example JSON File Structure
 [
