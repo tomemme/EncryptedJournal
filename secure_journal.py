@@ -8,7 +8,7 @@ import os
 import sys
 import gzip
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import enchant
 import re
 import string
@@ -38,6 +38,7 @@ class SecureJournalApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Secure Encrypted Journal")
+        self.set_app_icon()
         self.session_timeout = 300  # 5 minutes
         self.last_action_time = datetime.now()
         self.hashed_password = None
@@ -54,6 +55,10 @@ class SecureJournalApp:
         self.apply_theme()
 
     def setup_ui(self):
+        # Allow normal window resizing + keep UI visible at small sizes
+        self.root.resizable(True, True)
+        self.root.minsize(650, 520)
+
         # Frame for the date selection
         date_frame = tk.Frame(self.root, padx=5, pady=5)
         date_frame.pack(padx=5, pady=5)
@@ -61,21 +66,24 @@ class SecureJournalApp:
         # Entry widget for date input
         date_label = tk.Label(date_frame, text="Enter Date (YYYY-MM-DD):")
         date_label.grid(row=0, column=0, padx=0)
-
         self.date_entry = tk.Entry(date_frame, width=12)
         self.date_entry.grid(row=0, column=1, padx=0)
 
-        # main frame for text and buttons
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+        # --- Simple vertical split: TOP = editor, BOTTOM = days+buttons+tree ---
+        self.split = tk.PanedWindow(
+            self.root, orient=tk.VERTICAL
+        )  # classic tk paned window = super stable
+        self.split.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
-        text_frame = ttk.Frame(main_frame, padding=0, style="TFrame")
-        text_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # TOP pane: text editor
+        text_frame = ttk.Frame(self.split, padding=0, style="TFrame")
+        self.split.add(text_frame)  # no minsize args to avoid cross-platform quirks
 
         self.text_entry = scrolledtext.ScrolledText(
             text_frame, wrap=tk.WORD, width=65, height=20
         )
-        self.text_entry.pack()
+        # key: let the editor grow/shrink with the window
+        self.text_entry.pack(fill=tk.BOTH, expand=True)
 
         text_font = font.Font(family="Verdana", size=12)
         self.text_entry.configure(font=text_font)
@@ -85,40 +93,36 @@ class SecureJournalApp:
         # spell check tagging
         self.text_entry.tag_config("misspelled", foreground="red", underline=True)
         self.text_entry.bind("<KeyRelease>", lambda event: self.check_spelling())
-        self.text_entry.bind("<Button-3>", self.show_suggestions)
-        # For Linux/Windows (Button-3), macOS (Control-Button-1) fallback with Button-2 already set up
-        self.text_entry.bind("<Button-2>", self.show_suggestions)
+        self.text_entry.bind("<Button-3>", self.show_suggestions)  # Linux/Windows
+        self.text_entry.bind("<Button-2>", self.show_suggestions)  # macOS fallback
 
-        # Label to display days since last entry
-        self.days_since_label = ttk.Label(self.root, text=self.days_since_last_entry())
+        # BOTTOM pane: days label + buttons + tree (tree expands)
+        bottom = ttk.Frame(self.split)
+        self.split.add(bottom)
+
+        self.days_since_label = ttk.Label(bottom, text=self.days_since_last_entry())
         self.days_since_label.pack(pady=5)
 
-        # Buttons
-        button_frame = tk.Frame(self.root)
+        button_frame = tk.Frame(bottom)
         button_frame.pack(padx=10, pady=10)
 
-        save_button = ttk.Button(
+        ttk.Button(
             button_frame, text="Save Entry", command=self.save_journal_entry
-        )
-        save_button.grid(row=1, column=0, padx=5)
-        load_button = ttk.Button(
+        ).grid(row=1, column=0, padx=5)
+        ttk.Button(
             button_frame, text="Load Entry", command=self.load_journal_entry
-        )
-        load_button.grid(row=1, column=1, padx=5)
-        delete_button = ttk.Button(
+        ).grid(row=1, column=1, padx=5)
+        ttk.Button(
             button_frame, text="Delete Entry", command=self.delete_journal_entry
-        )
-        delete_button.grid(row=1, column=2, padx=5)
-        clear_button = ttk.Button(
+        ).grid(row=1, column=2, padx=5)
+        ttk.Button(
             button_frame, text="Clear Entry", command=self.clear_journal_entry
+        ).grid(row=1, column=3, padx=5)
+        ttk.Button(button_frame, text="light/dark", command=self.toggle_theme).grid(
+            row=1, column=5, padx=5
         )
-        clear_button.grid(row=1, column=3, padx=5)
-        theme_button = ttk.Button(
-            button_frame, text="light/dark", command=self.toggle_theme
-        )
-        theme_button.grid(row=1, column=5, padx=5)
 
-        treeview_frame = ttk.Frame(self.root)
+        treeview_frame = ttk.Frame(bottom)
         treeview_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
         scrollbar = ttk.Scrollbar(treeview_frame, orient=tk.VERTICAL)
@@ -129,8 +133,41 @@ class SecureJournalApp:
         self.treeview.bind("<<TreeviewSelect>>", self.on_treeview_select)
         scrollbar.config(command=self.treeview.yview)
 
+        # Initial sash position (give the editor more space to start)
+        def _init_sash():
+            try:
+                self.root.update_idletasks()
+                h = self.split.winfo_height() or self.root.winfo_height()
+                self.split.sash_place(
+                    0, 0, max(220, int(h * 0.55))
+                )  # y pos of the sash
+            except Exception:
+                pass
+
+        self.root.after(100, _init_sash)
+
         # Initial update of treeview
         self.update_treeview()
+
+    def set_app_icon(self):
+        try:
+            if sys.platform.startswith("win"):
+                ico_path = self.resource_path("./theme/journal.ico")
+                if os.path.exists(ico_path):
+                    self.root.iconbitmap(ico_path)
+                    return
+                # Fallback to PNG if no ICO present
+                png_path = self.resource_path("./theme/journal.png")
+                if os.path.exists(png_path):
+                    self.root.iconphoto(True, tk.PhotoImage(file=png_path))
+            else:
+                png_path = self.resource_path("./theme/journal.png")
+                if os.path.exists(png_path):
+                    # You can pass multiple sizes for best results
+                    self.root.iconphoto(True, tk.PhotoImage(file=png_path))
+        except Exception as e:
+            # Don't crash if the icon can't be loaded; just log it.
+            print(f"Icon not applied: {e}")
 
     def days_since_last_entry(self):
         data = self.load_json()
