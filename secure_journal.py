@@ -609,6 +609,19 @@ class SecureJournalApp:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    # hyperland friendly
+    root = tk.Tk(className="JournalApp")
+    root.title("Secure Encrypted Journal")
+    root.geometry("1200x800+120+80")
+    root.minsize(900, 600)
+
+    # DPI scaling 
+    root.tk.call("tk", "scaling", 1.25)
+
+    # nicer 
+    font.nametofont("TkDefaultFont").configure(size=11)
+    font.nametofont("TkTextFont").configure(size=12)
+    font.nametofont("TkFixedFont").configure(size=12)
+
     app = SecureJournalApp(root)
     root.mainloop()
