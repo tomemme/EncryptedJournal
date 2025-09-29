@@ -616,7 +616,7 @@ if __name__ == "__main__":
     root.minsize(900, 600)
 
     # DPI scaling 
-    root.tk.call("tk", "scaling", 1.25)
+    root.tk.call("tk", "scaling", 2.20)
 
     # nicer 
     font.nametofont("TkDefaultFont").configure(size=11)
