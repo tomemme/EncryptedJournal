@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox, font, scrolledtext
 from tkinter.simpledialog import askstring
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import tomllib
 import base64
 import os
 import sys
@@ -34,6 +35,42 @@ def secure_password(password):
         gc.collect()
 
 
+def load_omarchy_theme():
+    """
+    Loads current omarchy theme colors, falls back silently if theme not found
+    """
+    import os 
+    theme_toml = os.path.expanduser("~/.config/omarchy/current/theme/alacritty.toml")
+
+    if not os.path.exists(theme_toml):
+        return None
+
+    try:
+        with open(theme_toml, "rb") as f:
+            data = tomllib.load(f)
+
+        primary = data.get("colors", {}).get("primary", {})
+        normal = data.get("colors", {}).get("normal", {})
+        cursor = data.get("colors", {}).get("cursor", {})
+
+        bg = primary.get("background", "#1e1e2e")
+        fg = primary.get("foreground", "#cdd6f4")
+
+        # A = subtle jade accent = colors.normal.blue
+        accent = normal.get("blue", "#509475")
+
+        # Optional: get cursor color
+        cur = cursor.get("cursor", fg)
+
+        return {
+            "bg": bg,
+            "fg": fg,
+            "accent": accent,
+            "cursor": cur,
+        }
+    except Exception:
+        return None
+
 class SecureJournalApp:
     def __init__(self, root):
         self.root = root
@@ -53,6 +90,138 @@ class SecureJournalApp:
         self.setup_ui()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
+        self.omarchy_colors = load_omarchy_theme()
+        if self.omarchy_colors:
+            self.apply_omarchy_colors()
+
+    def apply_omarchy_colors(self):
+        """
+        Inject Omarchy colors into the azure theme before applying it.
+        """
+        colors = self.omarchy_colors
+        if not colors:
+            return
+
+        try:
+            # dynamically update tk palette
+            self.root.tk_setPalette(
+                background=colors["bg"],
+                foreground=colors["fg"],
+                activeBackground=colors["accent"],
+                activeForeground=colors["fg"],
+                highlightColor=colors["accent"]
+            )
+
+            # text widget background + fg
+            self.text_entry.config(
+                bg=colors["bg"],
+                fg=colors["fg"],
+                insertbackground=colors["cursor"]
+            )
+
+            # --- ttk widget styling (buttons + treeview) ---
+            style = ttk.Style()
+
+            # Button styling (custom to avoid overriding system theme)
+            style.configure(
+                "Omarchy.TButton",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                borderwidth=1,
+                relief="flat",
+                padding=6
+            )
+            style.map(
+                "Omarchy.TButton",
+                background=[("active", colors["accent"]), ("pressed", colors["accent"])],
+                foreground=[("active", colors["bg"]), ("pressed", colors["bg"])]
+            )
+
+            # Treeview styling
+            style.configure(
+                "Treeview",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                fieldbackground=colors["bg"],
+                borderwidth=0
+            )
+            style.map(
+                "Treeview",
+                background=[("selected", colors["accent"])],
+                foreground=[("selected", colors["bg"])]
+            )
+
+                        # Treeview heading (column headers)
+            style.configure(
+                "Treeview.Heading",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                relief="flat"
+            )
+            style.map(
+                "Treeview.Heading",
+                background=[("active", colors["accent"])],
+                foreground=[("active", colors["bg"])]
+            )
+
+            # Scrollbar styling
+            style.configure(
+                "Vertical.TScrollbar",
+                background=colors["bg"],
+                troughcolor=colors["bg"],
+                arrowcolor=colors["fg"],
+                bordercolor=colors["bg"],
+                relief="flat"
+            )
+            style.map(
+                "Vertical.TScrollbar",
+                background=[("active", colors["accent"])]
+            )
+
+            style.configure(
+                "Horizontal.TScrollbar",
+                background=colors["bg"],
+                troughcolor=colors["bg"],
+                arrowcolor=colors["fg"],
+                bordercolor=colors["bg"],
+                relief="flat"
+            )
+            style.map(
+                "Horizontal.TScrollbar",
+                background=[("active", colors["accent"])]
+            )
+
+            # Make ttk default background match theme
+            style.configure(
+                ".",  # default ttk style root
+                background=colors["bg"],
+                foreground=colors["fg"]
+            )
+
+            style.configure(".", background=colors["bg"], foreground=colors["fg"])
+
+            # Style entry widgets (date input field)
+            try:
+                self.date_entry.config(
+                    bg=colors["bg"],
+                    fg=colors["fg"],
+                    insertbackground=colors["cursor"],
+                    highlightbackground=colors["accent"],
+                    highlightcolor=colors["accent"]
+                )
+            except:
+                pass
+
+            # Remove harsh frame borders (make them inherit bg)
+            for frame in (self.button_frame, self.tree_frame):
+                try:
+                    frame.config(bg=colors["bg"], highlightbackground=colors["bg"])
+                except:
+                    pass
+
+        except Exception as e:
+            print("Failed to apply Omarchy theme:", e)
+
 
     def setup_ui(self):
         # Allow normal window resizing + keep UI visible at small sizes
@@ -103,24 +272,28 @@ class SecureJournalApp:
         self.days_since_label = ttk.Label(bottom, text=self.days_since_last_entry())
         self.days_since_label.pack(pady=5)
 
-        button_frame = tk.Frame(bottom)
+        button_frame = ttk.Frame(bottom)
         button_frame.pack(padx=10, pady=10)
 
         ttk.Button(
-            button_frame, text="Save Entry", command=self.save_journal_entry
+            button_frame, text="Save Entry", command=self.save_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=0, padx=5)
+
         ttk.Button(
-            button_frame, text="Load Entry", command=self.load_journal_entry
+            button_frame, text="Load Entry", command=self.load_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=1, padx=5)
+
         ttk.Button(
-            button_frame, text="Delete Entry", command=self.delete_journal_entry
+            button_frame, text="Delete Entry", command=self.delete_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=2, padx=5)
+
         ttk.Button(
-            button_frame, text="Clear Entry", command=self.clear_journal_entry
+            button_frame, text="Clear Entry", command=self.clear_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=3, padx=5)
-        ttk.Button(button_frame, text="light/dark", command=self.toggle_theme).grid(
-            row=1, column=5, padx=5
-        )
+
+        ttk.Button(
+            button_frame, text="light/dark", command=self.toggle_theme, style="Omarchy.TButton"
+        ).grid(row=1, column=5, padx=5)
 
         treeview_frame = ttk.Frame(bottom)
         treeview_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
