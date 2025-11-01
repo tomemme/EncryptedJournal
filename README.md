@@ -34,5 +34,27 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
 # Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Creating a Pull Request
+If you are new to GitHub pull requests, follow these steps to share your changes and test them before merging:
+
+1. **Create a new branch** for your change so the `main` (or `omarchy`) branch stays clean:
+   ```bash
+   git checkout -b feature/refresh-theme
+   ```
+2. **Stage and commit your work** once it is ready:
+   ```bash
+   git add secure_journal.py
+   git commit -m "Describe your change"
+   ```
+3. **Push the branch to GitHub**:
+   ```bash
+   git push -u origin feature/refresh-theme
+   ```
+4. **Open a pull request** on GitHub by selecting your branch as the source and the `omarchy` branch (or another target) as the destination. Describe the change, include testing notes, and submit the PR.
+5. **Test the PR locally** by checking out the branch from GitHub (`git fetch origin pull/<id>/head:pr-test && git checkout pr-test`). This lets you verify the changes before approving and merging them into the `omarchy` branch.
+6. **Merge the PR** once testing looks good. GitHub will offer a merge button (e.g., “Merge pull request”) after approvals and status checks pass. Choose the merge strategy that fits your workflow.
+
+These steps create a temporary review branch that teammates can pull down to try out the update (such as the automatic Omarchy theme refresh) before the code lands in the shared `omarchy` branch.
+
 # License
 This project is licensed under the MIT License. See the LICENSE file for more details.
