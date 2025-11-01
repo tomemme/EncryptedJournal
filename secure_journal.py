@@ -89,6 +89,9 @@ class SecureJournalApp:
         self.max_attempts = 5
         self.dictionary = enchant.Dict("en_US")
         self.current_theme = "dark"
+        self.current_layout = None
+        self._resize_after_id = None
+        self._pending_geometry = None
         self.setup_ui()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
@@ -127,22 +130,80 @@ class SecureJournalApp:
             # --- ttk widget styling (buttons + treeview) ---
             style = ttk.Style()
 
-            # Button styling (custom to avoid overriding system theme)
+            def blend(color, target, factor):
+                """Blend a hex color toward a target color by a factor (0-1)."""
+                color = color.lstrip("#")
+                target = target.lstrip("#")
+                if len(color) != 6 or len(target) != 6:
+                    return f"#{color}"
+                try:
+                    r = int(color[0:2], 16)
+                    g = int(color[2:4], 16)
+                    b = int(color[4:6], 16)
+                    rt = int(target[0:2], 16)
+                    gt = int(target[2:4], 16)
+                    bt = int(target[4:6], 16)
+                except ValueError:
+                    return f"#{color}"
+
+                nr = min(255, max(0, int(r + (rt - r) * factor)))
+                ng = min(255, max(0, int(g + (gt - g) * factor)))
+                nb = min(255, max(0, int(b + (bt - b) * factor)))
+                return f"#{nr:02x}{ng:02x}{nb:02x}"
+
+            accent_hover = blend(colors["accent"], "ffffff", 0.18)
+            accent_pressed = blend(colors["accent"], "000000", 0.22)
+            accent_disabled = blend(colors["accent"], colors["bg"], 0.55)
+            text_disabled = blend(colors["fg"], colors["bg"], 0.65)
+
             style.configure(
                 "Omarchy.TButton",
-                background=colors["bg"],
+                background=colors["accent"],
                 foreground=colors["fg"],
-                borderwidth=1,
-                relief="flat",
-                padding=6
+                borderwidth=0,
+                focusthickness=1,
+                focuscolor=colors["accent"],
+                padding=(12, 6)
             )
             style.map(
                 "Omarchy.TButton",
-                background=[("active", colors["accent"]), ("pressed", colors["accent"])],
-                foreground=[("active", colors["bg"]), ("pressed", colors["bg"])]
+                background=[
+                    ("!disabled", colors["accent"]),
+                    ("active", accent_hover),
+                    ("pressed", accent_pressed),
+                    ("disabled", accent_disabled),
+                ],
+                foreground=[
+                    ("!disabled", colors["fg"]),
+                    ("disabled", text_disabled)
+                ]
+            )
+
+            style.configure(
+                "Omarchy.TFrame",
+                background=colors["bg"]
+            )
+            style.configure(
+                "Omarchy.TLabel",
+                background=colors["bg"],
+                foreground=colors["fg"]
             )
 
             # Treeview styling
+            style.configure(
+                "Omarchy.Treeview",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                fieldbackground=colors["bg"],
+                borderwidth=0,
+                rowheight=24
+            )
+            style.map(
+                "Omarchy.Treeview",
+                background=[("selected", colors["accent"])],
+                foreground=[("selected", colors["bg"])]
+            )
+
             style.configure(
                 "Treeview",
                 background=colors["bg"],
@@ -156,7 +217,19 @@ class SecureJournalApp:
                 foreground=[("selected", colors["bg"])]
             )
 
-                        # Treeview heading (column headers)
+            # Treeview heading (column headers)
+            style.configure(
+                "Omarchy.Treeview.Heading",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                relief="flat"
+            )
+            style.map(
+                "Omarchy.Treeview.Heading",
+                background=[("active", accent_hover)],
+                foreground=[("active", colors["bg"])]
+            )
+
             style.configure(
                 "Treeview.Heading",
                 background=colors["bg"],
@@ -165,7 +238,7 @@ class SecureJournalApp:
             )
             style.map(
                 "Treeview.Heading",
-                background=[("active", colors["accent"])],
+                background=[("active", accent_hover)],
                 foreground=[("active", colors["bg"])]
             )
 
@@ -203,8 +276,6 @@ class SecureJournalApp:
                 foreground=colors["fg"]
             )
 
-            style.configure(".", background=colors["bg"], foreground=colors["fg"])
-
             # Style entry widgets (date input field)
             try:
                 self.date_entry.config(
@@ -217,11 +288,41 @@ class SecureJournalApp:
             except:
                 pass
 
+            try:
+                self.date_label.config(bg=colors["bg"], fg=colors["fg"])
+                self.date_frame.config(bg=colors["bg"])
+                self.date_inner.config(bg=colors["bg"])
+            except tk.TclError:
+                pass
+
+            try:
+                self.days_since_label.configure(style="Omarchy.TLabel")
+            except tk.TclError:
+                pass
+
+            for frame in (
+                self.editor_container,
+                self.controls_frame,
+                self.tree_container,
+                self.button_frame,
+                self.tree_frame,
+            ):
+                try:
+                    frame.configure(style="Omarchy.TFrame")
+                except tk.TclError:
+                    pass
+
+            try:
+                self.treeview.configure(style="Omarchy.Treeview")
+                self.treeview.heading("#0", text="")
+            except tk.TclError:
+                pass
+
             # Remove harsh frame borders (make them inherit bg)
-            for frame in (self.button_frame, self.tree_frame):
+            for frame in (self.button_frame, self.tree_frame, self.date_frame):
                 try:
                     frame.config(bg=colors["bg"], highlightbackground=colors["bg"])
-                except:
+                except Exception:
                     pass
 
         except Exception as e:
@@ -253,36 +354,49 @@ class SecureJournalApp:
     def setup_ui(self):
         # Allow normal window resizing + keep UI visible at small sizes
         self.root.resizable(True, True)
-        self.root.minsize(650, 520)
+        self.root.minsize(600, 460)
 
         # Frame for the date selection
-        date_frame = tk.Frame(self.root, padx=5, pady=5)
-        date_frame.pack(padx=5, pady=5)
+        self.date_frame = tk.Frame(self.root, padx=5, pady=5)
+        self.date_frame.pack(padx=5, pady=5, fill=tk.X)
+
+        # Center the date input within its own container so it stays aligned
+        self.date_inner = tk.Frame(self.date_frame)
+        self.date_inner.pack()
 
         # Entry widget for date input
-        date_label = tk.Label(date_frame, text="Enter Date (YYYY-MM-DD):")
-        date_label.grid(row=0, column=0, padx=0)
-        self.date_entry = tk.Entry(date_frame, width=12)
-        self.date_entry.grid(row=0, column=1, padx=0)
+        self.date_label = tk.Label(self.date_inner, text="Enter Date (YYYY-MM-DD):")
+        self.date_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.date_entry = tk.Entry(self.date_inner, width=12)
+        self.date_entry.pack(side=tk.LEFT)
 
-        # --- Simple vertical split: TOP = editor, BOTTOM = days+buttons+tree ---
+        # --- Responsive split container
         self.split = tk.PanedWindow(
             self.root, orient=tk.VERTICAL
-        )  # classic tk paned window = super stable
+        )  # tk PanedWindow = stable cross-platform
         self.split.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
-        # TOP pane: text editor
-        text_frame = ttk.Frame(self.split, padding=5, style="TFrame")
-        text_frame.rowconfigure(0, weight=1)
-        text_frame.columnconfigure(0, weight=1)
-        self.split.add(text_frame)  # no minsize args to avoid cross-platform quirks
+        # Editor container holds the text widget + controls so we can reposition together
+        self.editor_container = ttk.Frame(self.split, padding=5, style="Omarchy.TFrame")
+        self.editor_container.rowconfigure(0, weight=1)
+        # Reserve space for the controls that live under the editor even when
+        # the window height becomes constrained (e.g. half-screen vertical
+        # tiling). Without a minimum size the text widget would consume the
+        # entire pane and hide the action buttons until the user adjusted the
+        # sash manually.
+        self.editor_container.rowconfigure(1, weight=0, minsize=120)
+        self.editor_container.columnconfigure(0, weight=1)
+        self.editor_container.columnconfigure(1, weight=0)
+        self.split.add(self.editor_container)
 
         self.text_entry = tk.Text(
-            text_frame, wrap=tk.WORD, width=65, height=20
+            self.editor_container, wrap=tk.WORD, width=65, height=20
         )
         self.text_entry.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
-        text_scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.text_entry.yview)
+        text_scrollbar = ttk.Scrollbar(
+            self.editor_container, orient=tk.VERTICAL, command=self.text_entry.yview
+        )
         text_scrollbar.grid(row=0, column=1, sticky="ns")
         self.text_entry.configure(yscrollcommand=text_scrollbar.set)
 
@@ -297,62 +411,130 @@ class SecureJournalApp:
         self.text_entry.bind("<Button-3>", self.show_suggestions)  # Linux/Windows
         self.text_entry.bind("<Button-2>", self.show_suggestions)  # macOS fallback
 
-        # BOTTOM pane: days label + buttons + tree (tree expands)
-        bottom = ttk.Frame(self.split)
-        self.split.add(bottom)
+        # Container for status + action buttons (lives under the editor in all layouts)
+        self.controls_frame = ttk.Frame(self.editor_container, style="Omarchy.TFrame")
+        self.controls_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.controls_frame.columnconfigure(0, weight=1)
 
-        self.days_since_label = ttk.Label(bottom, text=self.days_since_last_entry())
-        self.days_since_label.pack(pady=5)
+        self.days_since_label = ttk.Label(
+            self.controls_frame, text=self.days_since_last_entry(), style="Omarchy.TLabel"
+        )
+        self.days_since_label.pack(pady=(0, 5))
 
-        button_frame = ttk.Frame(bottom)
-        button_frame.pack(padx=10, pady=10)
+        self.button_frame = ttk.Frame(self.controls_frame, style="Omarchy.TFrame")
+        self.button_frame.pack(padx=10, pady=5)
+        for i in range(6):
+            self.button_frame.columnconfigure(i, weight=1)
 
         ttk.Button(
-            button_frame, text="Save Entry", command=self.save_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Save Entry", command=self.save_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=0, padx=5)
 
         ttk.Button(
-            button_frame, text="Load Entry", command=self.load_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Load Entry", command=self.load_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=1, padx=5)
 
         ttk.Button(
-            button_frame, text="Delete Entry", command=self.delete_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Delete Entry", command=self.delete_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=2, padx=5)
 
         ttk.Button(
-            button_frame, text="Clear Entry", command=self.clear_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Clear Entry", command=self.clear_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=3, padx=5)
 
         ttk.Button(
-            button_frame, text="light/dark", command=self.toggle_theme, style="Omarchy.TButton"
+            self.button_frame, text="light/dark", command=self.toggle_theme, style="Omarchy.TButton"
         ).grid(row=1, column=5, padx=5)
 
-        treeview_frame = ttk.Frame(bottom)
-        treeview_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+        # Separate container for the treeview so we can move it below or beside the editor
+        self.tree_container = ttk.Frame(self.split, style="Omarchy.TFrame")
+        self.tree_container.rowconfigure(0, weight=1)
+        self.tree_container.columnconfigure(0, weight=1)
+        self.split.add(self.tree_container)
 
-        scrollbar = ttk.Scrollbar(treeview_frame, orient=tk.VERTICAL)
+        self.tree_frame = ttk.Frame(self.tree_container, style="Omarchy.TFrame")
+        self.tree_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(self.tree_frame, orient=tk.VERTICAL)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.treeview = ttk.Treeview(treeview_frame, yscrollcommand=scrollbar.set)
+        self.treeview = ttk.Treeview(self.tree_frame, yscrollcommand=scrollbar.set)
         self.treeview.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
         self.treeview.bind("<<TreeviewSelect>>", self.on_treeview_select)
         scrollbar.config(command=self.treeview.yview)
 
-        # Initial sash position (give the editor more space to start)
-        def _init_sash():
-            try:
-                self.root.update_idletasks()
-                h = self.split.winfo_height() or self.root.winfo_height()
-                self.split.sash_place(
-                    0, 0, max(220, int(h * 0.55))
-                )  # y pos of the sash
-            except Exception:
-                pass
-
-        self.root.after(100, _init_sash)
+        self.root.bind("<Configure>", self.on_root_resize)
+        self.root.after(200, self._initialize_layout)
 
         # Initial update of treeview
         self.update_treeview()
+
+    def _initialize_layout(self):
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        if width <= 1 or height <= 1:
+            self.root.after(100, self._initialize_layout)
+            return
+        self.update_layout(width, height)
+
+    def on_root_resize(self, event):
+        if event.widget is not self.root:
+            return
+        if event.width <= 0 or event.height <= 0:
+            return
+        self._pending_geometry = (event.width, event.height)
+        if self._resize_after_id is not None:
+            self.root.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.root.after(120, self._apply_pending_layout)
+
+    def _apply_pending_layout(self):
+        self._resize_after_id = None
+        if not self._pending_geometry:
+            return
+        width, height = self._pending_geometry
+        self.update_layout(width, height)
+
+    def update_layout(self, width, height):
+        if width <= 1 or height <= 1:
+            return
+        desired_layout = "horizontal" if width >= height else "vertical"
+        if desired_layout == self.current_layout:
+            return
+
+        self.current_layout = desired_layout
+        orient = tk.HORIZONTAL if desired_layout == "horizontal" else tk.VERTICAL
+        self.split.configure(orient=orient)
+
+        # ensure panes are re-added in the proper order
+        try:
+            self.split.forget(self.editor_container)
+        except tk.TclError:
+            pass
+        try:
+            self.split.forget(self.tree_container)
+        except tk.TclError:
+            pass
+
+        self.split.add(self.editor_container)
+        self.split.add(self.tree_container)
+
+        self.root.after(50, self._position_sash)
+
+    def _position_sash(self):
+        if not self.current_layout:
+            return
+        try:
+            self.root.update_idletasks()
+            if self.current_layout == "vertical":
+                total = self.split.winfo_height() or self.root.winfo_height()
+                pos = max(220, int(total * 0.58))
+                self.split.sash_place(0, 0, pos)
+            else:
+                total = self.split.winfo_width() or self.root.winfo_width()
+                pos = max(360, int(total * 0.62))
+                self.split.sash_place(0, pos, 0)
+        except Exception:
+            pass
 
     def set_app_icon(self):
         try:
