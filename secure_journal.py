@@ -35,12 +35,14 @@ def secure_password(password):
         gc.collect()
 
 
+OMARCHY_THEME_PATH = os.path.expanduser("~/.config/omarchy/current/theme/alacritty.toml")
+
+
 def load_omarchy_theme():
     """
     Loads current omarchy theme colors, falls back silently if theme not found
     """
-    import os 
-    theme_toml = os.path.expanduser("~/.config/omarchy/current/theme/alacritty.toml")
+    theme_toml = OMARCHY_THEME_PATH
 
     if not os.path.exists(theme_toml):
         return None
@@ -90,9 +92,12 @@ class SecureJournalApp:
         self.setup_ui()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
+        self.omarchy_theme_path = OMARCHY_THEME_PATH
         self.omarchy_colors = load_omarchy_theme()
         if self.omarchy_colors:
             self.apply_omarchy_colors()
+        self.last_omarchy_theme_mtime = self._get_omarchy_theme_mtime()
+        self._schedule_omarchy_theme_check()
 
     def apply_omarchy_colors(self):
         """
@@ -221,6 +226,28 @@ class SecureJournalApp:
 
         except Exception as e:
             print("Failed to apply Omarchy theme:", e)
+
+    def _get_omarchy_theme_mtime(self):
+        try:
+            return os.path.getmtime(self.omarchy_theme_path)
+        except OSError:
+            return None
+
+    def _check_for_omarchy_theme_update(self):
+        current_mtime = self._get_omarchy_theme_mtime()
+        if current_mtime != self.last_omarchy_theme_mtime:
+            colors = load_omarchy_theme()
+            if colors:
+                self.omarchy_colors = colors
+                self.apply_omarchy_colors()
+            self.last_omarchy_theme_mtime = current_mtime
+        self._schedule_omarchy_theme_check()
+
+    def _schedule_omarchy_theme_check(self):
+        try:
+            self.root.after(5000, self._check_for_omarchy_theme_update)
+        except Exception:
+            pass
 
 
     def setup_ui(self):
