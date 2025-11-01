@@ -191,8 +191,45 @@ class SecureJournalApp:
             )
 
             # Treeview styling
-            base_tree_layout = style.layout("Treeview")
-            style.layout("Omarchy.Treeview", base_tree_layout)
+            if not hasattr(self, "_omarchy_tree_field_image"):
+                self._omarchy_tree_field_image = tk.PhotoImage(width=2, height=2)
+            self._omarchy_tree_field_image.put(colors["bg"], to=(0, 0, 2, 2))
+
+            element_name = "Omarchy.Treeview.field"
+            try:
+                if element_name not in style.element_names():
+                    style.element_create(
+                        element_name,
+                        "image",
+                        self._omarchy_tree_field_image,
+                        border=0,
+                        sticky="nswe",
+                    )
+            except tk.TclError:
+                pass
+
+            style.layout(
+                "Omarchy.Treeview",
+                [
+                    (
+                        element_name,
+                        {
+                            "sticky": "nswe",
+                            "children": [
+                                (
+                                    "Treeview.padding",
+                                    {
+                                        "sticky": "nswe",
+                                        "children": [
+                                            ("Treeview.treearea", {"sticky": "nswe"})
+                                        ],
+                                    },
+                                )
+                            ],
+                        },
+                    )
+                ],
+            )
 
             style.configure(
                 "Omarchy.Treeview",
@@ -204,16 +241,22 @@ class SecureJournalApp:
                 relief="flat",
                 bordercolor=colors["bg"],
                 lightcolor=colors["bg"],
-                darkcolor=colors["bg"]
+                darkcolor=colors["bg"],
             )
             style.map(
                 "Omarchy.Treeview",
-                background=[("selected", colors["accent"]), ("", colors["bg"])],
-                foreground=[("selected", colors["bg"]), ("", colors["fg"])],
-                fieldbackground=[("", colors["bg"])],
-                bordercolor=[("", colors["bg"])],
-                lightcolor=[("", colors["bg"])],
-                darkcolor=[("", colors["bg"])],
+                background=[
+                    ("selected", colors["accent"]),
+                    ("!selected", colors["bg"]),
+                ],
+                foreground=[
+                    ("selected", colors["bg"]),
+                    ("!selected", colors["fg"]),
+                ],
+                fieldbackground=[("!selected", colors["bg"])],
+                bordercolor=[("!selected", colors["bg"])],
+                lightcolor=[("!selected", colors["bg"])],
+                darkcolor=[("!selected", colors["bg"])],
             )
 
             style.configure(
@@ -229,12 +272,18 @@ class SecureJournalApp:
             )
             style.map(
                 "Treeview",
-                background=[("selected", colors["accent"]), ("", colors["bg"])],
-                foreground=[("selected", colors["bg"]), ("", colors["fg"])],
-                fieldbackground=[("", colors["bg"])],
-                bordercolor=[("", colors["bg"])],
-                lightcolor=[("", colors["bg"])],
-                darkcolor=[("", colors["bg"])],
+                background=[
+                    ("selected", colors["accent"]),
+                    ("!selected", colors["bg"]),
+                ],
+                foreground=[
+                    ("selected", colors["bg"]),
+                    ("!selected", colors["fg"]),
+                ],
+                fieldbackground=[("!selected", colors["bg"])],
+                bordercolor=[("!selected", colors["bg"])],
+                lightcolor=[("!selected", colors["bg"])],
+                darkcolor=[("!selected", colors["bg"])],
             )
 
             # Treeview heading (column headers)
