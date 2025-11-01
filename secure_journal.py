@@ -99,6 +99,7 @@ class SecureJournalApp:
         self.omarchy_colors = load_omarchy_theme()
         if self.omarchy_colors:
             self.apply_omarchy_colors()
+        self.update_theme_toggle_visibility()
         self.last_omarchy_theme_mtime = self._get_omarchy_theme_mtime()
         self._schedule_omarchy_theme_check()
 
@@ -190,18 +191,29 @@ class SecureJournalApp:
             )
 
             # Treeview styling
+            base_tree_layout = style.layout("Treeview")
+            style.layout("Omarchy.Treeview", base_tree_layout)
+
             style.configure(
                 "Omarchy.Treeview",
                 background=colors["bg"],
                 foreground=colors["fg"],
                 fieldbackground=colors["bg"],
                 borderwidth=0,
-                rowheight=24
+                rowheight=24,
+                relief="flat",
+                bordercolor=colors["bg"],
+                lightcolor=colors["bg"],
+                darkcolor=colors["bg"]
             )
             style.map(
                 "Omarchy.Treeview",
-                background=[("selected", colors["accent"])],
-                foreground=[("selected", colors["bg"])]
+                background=[("selected", colors["accent"]), ("", colors["bg"])],
+                foreground=[("selected", colors["bg"]), ("", colors["fg"])],
+                fieldbackground=[("", colors["bg"])],
+                bordercolor=[("", colors["bg"])],
+                lightcolor=[("", colors["bg"])],
+                darkcolor=[("", colors["bg"])],
             )
 
             style.configure(
@@ -209,12 +221,20 @@ class SecureJournalApp:
                 background=colors["bg"],
                 foreground=colors["fg"],
                 fieldbackground=colors["bg"],
-                borderwidth=0
+                borderwidth=0,
+                relief="flat",
+                bordercolor=colors["bg"],
+                lightcolor=colors["bg"],
+                darkcolor=colors["bg"]
             )
             style.map(
                 "Treeview",
-                background=[("selected", colors["accent"])],
-                foreground=[("selected", colors["bg"])]
+                background=[("selected", colors["accent"]), ("", colors["bg"])],
+                foreground=[("selected", colors["bg"]), ("", colors["fg"])],
+                fieldbackground=[("", colors["bg"])],
+                bordercolor=[("", colors["bg"])],
+                lightcolor=[("", colors["bg"])],
+                darkcolor=[("", colors["bg"])],
             )
 
             # Treeview heading (column headers)
@@ -338,9 +358,10 @@ class SecureJournalApp:
         current_mtime = self._get_omarchy_theme_mtime()
         if current_mtime != self.last_omarchy_theme_mtime:
             colors = load_omarchy_theme()
+            self.omarchy_colors = colors
             if colors:
-                self.omarchy_colors = colors
                 self.apply_omarchy_colors()
+            self.update_theme_toggle_visibility()
             self.last_omarchy_theme_mtime = current_mtime
         self._schedule_omarchy_theme_check()
 
@@ -348,6 +369,19 @@ class SecureJournalApp:
         try:
             self.root.after(5000, self._check_for_omarchy_theme_update)
         except Exception:
+            pass
+
+    def update_theme_toggle_visibility(self):
+        if not hasattr(self, "theme_toggle_button"):
+            return
+
+        try:
+            if getattr(self, "omarchy_colors", None):
+                self.theme_toggle_button.grid_remove()
+            else:
+                if not self.theme_toggle_button.winfo_ismapped():
+                    self.theme_toggle_button.grid()
+        except tk.TclError:
             pass
 
 
@@ -442,9 +476,10 @@ class SecureJournalApp:
             self.button_frame, text="Clear Entry", command=self.clear_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=3, padx=5)
 
-        ttk.Button(
+        self.theme_toggle_button = ttk.Button(
             self.button_frame, text="light/dark", command=self.toggle_theme, style="Omarchy.TButton"
-        ).grid(row=1, column=5, padx=5)
+        )
+        self.theme_toggle_button.grid(row=1, column=5, padx=5)
 
         # Separate container for the treeview so we can move it below or beside the editor
         self.tree_container = ttk.Frame(self.split, style="Omarchy.TFrame")
