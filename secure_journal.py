@@ -379,6 +379,12 @@ class SecureJournalApp:
         # Editor container holds the text widget + controls so we can reposition together
         self.editor_container = ttk.Frame(self.split, padding=5, style="Omarchy.TFrame")
         self.editor_container.rowconfigure(0, weight=1)
+        # Reserve space for the controls that live under the editor even when
+        # the window height becomes constrained (e.g. half-screen vertical
+        # tiling). Without a minimum size the text widget would consume the
+        # entire pane and hide the action buttons until the user adjusted the
+        # sash manually.
+        self.editor_container.rowconfigure(1, weight=0, minsize=120)
         self.editor_container.columnconfigure(0, weight=1)
         self.editor_container.columnconfigure(1, weight=0)
         self.split.add(self.editor_container)
