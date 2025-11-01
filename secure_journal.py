@@ -510,19 +510,19 @@ class SecureJournalApp:
             self.button_frame.columnconfigure(i, weight=1)
 
         ttk.Button(
-            self.button_frame, text="Save Entry", command=self.save_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Save", command=self.save_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=0, padx=5)
 
         ttk.Button(
-            self.button_frame, text="Load Entry", command=self.load_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Load", command=self.load_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=1, padx=5)
 
         ttk.Button(
-            self.button_frame, text="Delete Entry", command=self.delete_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Delete", command=self.delete_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=2, padx=5)
 
         ttk.Button(
-            self.button_frame, text="Clear Entry", command=self.clear_journal_entry, style="Omarchy.TButton"
+            self.button_frame, text="Clear", command=self.clear_journal_entry, style="Omarchy.TButton"
         ).grid(row=1, column=3, padx=5)
 
         ttk.Button(
