@@ -89,6 +89,9 @@ class SecureJournalApp:
         self.max_attempts = 5
         self.dictionary = enchant.Dict("en_US")
         self.current_theme = "dark"
+        self.current_layout = None
+        self._resize_after_id = None
+        self._pending_geometry = None
         self.setup_ui()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
@@ -253,11 +256,11 @@ class SecureJournalApp:
     def setup_ui(self):
         # Allow normal window resizing + keep UI visible at small sizes
         self.root.resizable(True, True)
-        self.root.minsize(650, 520)
+        self.root.minsize(600, 460)
 
         # Frame for the date selection
         date_frame = tk.Frame(self.root, padx=5, pady=5)
-        date_frame.pack(padx=5, pady=5)
+        date_frame.pack(padx=5, pady=5, fill=tk.X)
 
         # Entry widget for date input
         date_label = tk.Label(date_frame, text="Enter Date (YYYY-MM-DD):")
@@ -265,24 +268,27 @@ class SecureJournalApp:
         self.date_entry = tk.Entry(date_frame, width=12)
         self.date_entry.grid(row=0, column=1, padx=0)
 
-        # --- Simple vertical split: TOP = editor, BOTTOM = days+buttons+tree ---
+        # --- Responsive split container
         self.split = tk.PanedWindow(
             self.root, orient=tk.VERTICAL
-        )  # classic tk paned window = super stable
+        )  # tk PanedWindow = stable cross-platform
         self.split.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
-        # TOP pane: text editor
-        text_frame = ttk.Frame(self.split, padding=5, style="TFrame")
-        text_frame.rowconfigure(0, weight=1)
-        text_frame.columnconfigure(0, weight=1)
-        self.split.add(text_frame)  # no minsize args to avoid cross-platform quirks
+        # Editor container holds the text widget + controls so we can reposition together
+        self.editor_container = ttk.Frame(self.split, padding=5, style="TFrame")
+        self.editor_container.rowconfigure(0, weight=1)
+        self.editor_container.columnconfigure(0, weight=1)
+        self.editor_container.columnconfigure(1, weight=0)
+        self.split.add(self.editor_container)
 
         self.text_entry = tk.Text(
-            text_frame, wrap=tk.WORD, width=65, height=20
+            self.editor_container, wrap=tk.WORD, width=65, height=20
         )
         self.text_entry.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
-        text_scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.text_entry.yview)
+        text_scrollbar = ttk.Scrollbar(
+            self.editor_container, orient=tk.VERTICAL, command=self.text_entry.yview
+        )
         text_scrollbar.grid(row=0, column=1, sticky="ns")
         self.text_entry.configure(yscrollcommand=text_scrollbar.set)
 
@@ -297,15 +303,20 @@ class SecureJournalApp:
         self.text_entry.bind("<Button-3>", self.show_suggestions)  # Linux/Windows
         self.text_entry.bind("<Button-2>", self.show_suggestions)  # macOS fallback
 
-        # BOTTOM pane: days label + buttons + tree (tree expands)
-        bottom = ttk.Frame(self.split)
-        self.split.add(bottom)
+        # Container for status + action buttons (lives under the editor in all layouts)
+        self.controls_frame = ttk.Frame(self.editor_container)
+        self.controls_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.controls_frame.columnconfigure(0, weight=1)
 
-        self.days_since_label = ttk.Label(bottom, text=self.days_since_last_entry())
-        self.days_since_label.pack(pady=5)
+        self.days_since_label = ttk.Label(
+            self.controls_frame, text=self.days_since_last_entry()
+        )
+        self.days_since_label.pack(pady=(0, 5))
 
-        button_frame = ttk.Frame(bottom)
-        button_frame.pack(padx=10, pady=10)
+        button_frame = ttk.Frame(self.controls_frame)
+        button_frame.pack(padx=10, pady=5)
+        for i in range(6):
+            button_frame.columnconfigure(i, weight=1)
 
         ttk.Button(
             button_frame, text="Save Entry", command=self.save_journal_entry, style="Omarchy.TButton"
@@ -327,7 +338,13 @@ class SecureJournalApp:
             button_frame, text="light/dark", command=self.toggle_theme, style="Omarchy.TButton"
         ).grid(row=1, column=5, padx=5)
 
-        treeview_frame = ttk.Frame(bottom)
+        # Separate container for the treeview so we can move it below or beside the editor
+        self.tree_container = ttk.Frame(self.split)
+        self.tree_container.rowconfigure(0, weight=1)
+        self.tree_container.columnconfigure(0, weight=1)
+        self.split.add(self.tree_container)
+
+        treeview_frame = ttk.Frame(self.tree_container)
         treeview_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
         scrollbar = ttk.Scrollbar(treeview_frame, orient=tk.VERTICAL)
@@ -338,21 +355,78 @@ class SecureJournalApp:
         self.treeview.bind("<<TreeviewSelect>>", self.on_treeview_select)
         scrollbar.config(command=self.treeview.yview)
 
-        # Initial sash position (give the editor more space to start)
-        def _init_sash():
-            try:
-                self.root.update_idletasks()
-                h = self.split.winfo_height() or self.root.winfo_height()
-                self.split.sash_place(
-                    0, 0, max(220, int(h * 0.55))
-                )  # y pos of the sash
-            except Exception:
-                pass
-
-        self.root.after(100, _init_sash)
+        self.root.bind("<Configure>", self.on_root_resize)
+        self.root.after(200, self._initialize_layout)
 
         # Initial update of treeview
         self.update_treeview()
+
+    def _initialize_layout(self):
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        if width <= 1 or height <= 1:
+            self.root.after(100, self._initialize_layout)
+            return
+        self.update_layout(width, height)
+
+    def on_root_resize(self, event):
+        if event.widget is not self.root:
+            return
+        if event.width <= 0 or event.height <= 0:
+            return
+        self._pending_geometry = (event.width, event.height)
+        if self._resize_after_id is not None:
+            self.root.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.root.after(120, self._apply_pending_layout)
+
+    def _apply_pending_layout(self):
+        self._resize_after_id = None
+        if not self._pending_geometry:
+            return
+        width, height = self._pending_geometry
+        self.update_layout(width, height)
+
+    def update_layout(self, width, height):
+        if width <= 1 or height <= 1:
+            return
+        desired_layout = "horizontal" if width >= height else "vertical"
+        if desired_layout == self.current_layout:
+            return
+
+        self.current_layout = desired_layout
+        orient = tk.HORIZONTAL if desired_layout == "horizontal" else tk.VERTICAL
+        self.split.configure(orient=orient)
+
+        # ensure panes are re-added in the proper order
+        try:
+            self.split.forget(self.editor_container)
+        except tk.TclError:
+            pass
+        try:
+            self.split.forget(self.tree_container)
+        except tk.TclError:
+            pass
+
+        self.split.add(self.editor_container)
+        self.split.add(self.tree_container)
+
+        self.root.after(50, self._position_sash)
+
+    def _position_sash(self):
+        if not self.current_layout:
+            return
+        try:
+            self.root.update_idletasks()
+            if self.current_layout == "vertical":
+                total = self.split.winfo_height() or self.root.winfo_height()
+                pos = max(220, int(total * 0.58))
+                self.split.sash_place(0, 0, pos)
+            else:
+                total = self.split.winfo_width() or self.root.winfo_width()
+                pos = max(360, int(total * 0.62))
+                self.split.sash_place(0, pos, 0)
+        except Exception:
+            pass
 
     def set_app_icon(self):
         try:
