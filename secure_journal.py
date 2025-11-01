@@ -168,11 +168,13 @@ class SecureJournalApp:
             style.map(
                 "Omarchy.TButton",
                 background=[
+                    ("!disabled", colors["accent"]),
                     ("active", accent_hover),
                     ("pressed", accent_pressed),
                     ("disabled", accent_disabled),
                 ],
                 foreground=[
+                    ("!disabled", colors["fg"]),
                     ("disabled", text_disabled)
                 ]
             )
@@ -312,7 +314,7 @@ class SecureJournalApp:
 
             try:
                 self.treeview.configure(style="Omarchy.Treeview")
-                self.treeview.heading("#0", text="Date")
+                self.treeview.heading("#0", text="")
             except tk.TclError:
                 pass
 
