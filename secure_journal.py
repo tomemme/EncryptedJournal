@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, font, scrolledtext
+from tkinter import ttk, messagebox, font
 from tkinter.simpledialog import askstring
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -272,14 +272,19 @@ class SecureJournalApp:
         self.split.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
         # TOP pane: text editor
-        text_frame = ttk.Frame(self.split, padding=0, style="TFrame")
+        text_frame = ttk.Frame(self.split, padding=5, style="TFrame")
+        text_frame.rowconfigure(0, weight=1)
+        text_frame.columnconfigure(0, weight=1)
         self.split.add(text_frame)  # no minsize args to avoid cross-platform quirks
 
-        self.text_entry = scrolledtext.ScrolledText(
+        self.text_entry = tk.Text(
             text_frame, wrap=tk.WORD, width=65, height=20
         )
-        # key: let the editor grow/shrink with the window
-        self.text_entry.pack(fill=tk.BOTH, expand=True)
+        self.text_entry.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+
+        text_scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.text_entry.yview)
+        text_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.text_entry.configure(yscrollcommand=text_scrollbar.set)
 
         text_font = font.Font(family="Verdana", size=12)
         self.text_entry.configure(font=text_font)
