@@ -5,6 +5,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import tomllib
 import base64
 import os
+import shutil
 import sys
 import gzip
 import json
@@ -969,6 +970,18 @@ class SecureJournalApp:
 
     def change_journal_password(self):
         self.last_action_time = datetime.now()
+        backup_path = None
+        if os.path.exists(self.filename):
+            try:
+                backup_path = self.create_journal_backup()
+            except Exception as backup_error:
+                messagebox.showwarning(
+                    "Backup Failed",
+                    "The journal could not be backed up before attempting the password change. "
+                    "The process will continue without a backup.\n\n"
+                    f"Details: {backup_error}",
+                )
+
         data = self.load_json()
 
         if not data:
@@ -988,6 +1001,10 @@ class SecureJournalApp:
             return
 
         updated_data = []
+        failed_entries = []
+        total_encrypted_entries = 0
+        successful_updates = 0
+        failure_threshold = 0.9
 
         with secure_password(current_password) as old_pwd:
             with secure_password(new_password) as new_pwd:
@@ -996,30 +1013,84 @@ class SecureJournalApp:
                     if not encrypted_entry:
                         updated_data.append(entry)
                         continue
+                    total_encrypted_entries += 1
                     try:
                         plaintext = self.decrypt_message(encrypted_entry, old_pwd)
-                    except ValueError:
-                        messagebox.showerror(
-                            "Error",
-                            "The current password is incorrect or some entries are corrupted. The password was not changed.",
+                    except Exception as error:
+                        failed_entries.append(
+                            {
+                                "date": entry.get("date")
+                                or entry.get("timestamp")
+                                or entry.get("created_at")
+                                or "Unknown entry",
+                                "reason": str(error),
+                            }
                         )
-                        return
-                    except Exception as e:
-                        messagebox.showerror(
-                            "Error", f"Failed to decrypt an entry: {e}"
-                        )
-                        return
+                        updated_data.append(entry)
+                        continue
 
                     encrypted_new = self.encrypt_message(plaintext, new_pwd)
                     if encrypted_new is None:
-                        messagebox.showerror(
-                            "Error", "Failed to encrypt entries with the new password."
+                        failed_entries.append(
+                            {
+                                "date": entry.get("date")
+                                or entry.get("timestamp")
+                                or entry.get("created_at")
+                                or "Unknown entry",
+                                "reason": "Failed to encrypt entry with the new password.",
+                            }
                         )
-                        return
+                        updated_data.append(entry)
+                        continue
 
                     updated_entry = dict(entry)
                     updated_entry["entry"] = encrypted_new
                     updated_data.append(updated_entry)
+                    successful_updates += 1
+
+        success_ratio = (
+            successful_updates / total_encrypted_entries
+            if total_encrypted_entries
+            else 1.0
+        )
+
+        log_path = None
+        if failed_entries:
+            try:
+                log_path = self.log_password_rotation_failures(failed_entries)
+            except Exception as log_error:
+                messagebox.showwarning(
+                    "Logging Failed",
+                    "Unable to record failed entry details for the password change.\n\n"
+                    f"Details: {log_error}",
+                )
+
+        if total_encrypted_entries and success_ratio < failure_threshold:
+            details = ""
+            if failed_entries:
+                failed_dates = ", ".join(
+                    sorted({failure["date"] for failure in failed_entries})
+                )
+                details = (
+                    "\n\nEntries that could not be re-encrypted: "
+                    f"{failed_dates}."
+                )
+            log_note = (
+                f"\n\nDetailed information has been saved to: {log_path}"
+                if log_path
+                else ""
+            )
+            backup_note = (
+                f"\n\nA backup of your journal is stored at: {backup_path}"
+                if backup_path
+                else ""
+            )
+            messagebox.showerror(
+                "Password Change Incomplete",
+                "Fewer than 90% of your journal entries could be updated with the new password. "
+                "Your journal has not been modified." + details + log_note + backup_note,
+            )
+            return
 
         try:
             self.save_json(updated_data)
@@ -1029,10 +1100,55 @@ class SecureJournalApp:
             )
             return
 
-        messagebox.showinfo(
-            "Success", "All journal entries have been re-encrypted with the new password."
-        )
+        if failed_entries:
+            failed_details = "\n".join(
+                f"• {failure['date']}: {failure['reason']}" for failure in failed_entries
+            )
+            log_message = (
+                f"\nA record of the affected entries has been written to: {log_path}"
+                if log_path
+                else ""
+            )
+            backup_note = (
+                f"\nYour pre-change journal is backed up at: {backup_path}"
+                if backup_path
+                else ""
+            )
+            messagebox.showwarning(
+                "Password Change Completed with Warnings",
+                "Most entries were updated with the new password, "
+                "but some entries could not be re-encrypted.\n\n"
+                f"{failed_details}{log_message}{backup_note}",
+            )
+        else:
+            messagebox.showinfo(
+                "Success", "All journal entries have been re-encrypted with the new password."
+            )
         self.hashed_password = None
+
+    def create_journal_backup(self):
+        self._ensure_parent_dir()
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base_name = os.path.basename(self.filename)
+        backup_name = f"{base_name}.bak-{timestamp}"
+        backup_path = os.path.join(os.path.dirname(self.filename), backup_name)
+        shutil.copy2(self.filename, backup_path)
+        return backup_path
+
+    def log_password_rotation_failures(self, failed_entries):
+        if not failed_entries:
+            return None
+        log_path = os.path.join(
+            os.path.dirname(self.filename), "password_rotation_failures.log"
+        )
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            f"[{timestamp}] {failure['date']} - {failure['reason']}"
+            for failure in failed_entries
+        ]
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write("\n".join(lines) + "\n")
+        return log_path
 
     def _ensure_parent_dir(self):
         parent = os.path.dirname(self.filename)
