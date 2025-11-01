@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, font
-from tkinter.simpledialog import askstring
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import tomllib
@@ -776,9 +775,72 @@ class SecureJournalApp:
             self.root.destroy()
             return None
 
-        password = askstring(
-            "Password Required", "Enter your journal password:", show="*"
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Password Required")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        # Match the journal tile aesthetics when possible
+        try:
+            dialog.configure(bg=self.text_entry.cget("bg"))
+        except tk.TclError:
+            pass
+
+        prompt = ttk.Label(
+            dialog, text="Enter your journal password:", style="Omarchy.TLabel"
         )
+        prompt.pack(padx=20, pady=(20, 10))
+
+        password_var = tk.StringVar()
+        entry = ttk.Entry(dialog, textvariable=password_var, show="*")
+        entry.pack(padx=20, pady=(0, 15))
+        entry.focus_set()
+
+        button_row = ttk.Frame(dialog, style="Omarchy.TFrame")
+        button_row.pack(padx=20, pady=(0, 20))
+
+        result = {"value": None}
+
+        def submit(event=None):
+            result["value"] = password_var.get()
+            dialog.destroy()
+
+        def cancel(event=None):
+            result["value"] = None
+            dialog.destroy()
+
+        ttk.Button(
+            button_row, text="OK", command=submit, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            button_row, text="Cancel", command=cancel, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT)
+
+        dialog.bind("<Return>", submit)
+        dialog.bind("<Escape>", cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+        # Center the dialog over the journal tile (editor container)
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+
+        target = self.editor_container
+        target_x = target.winfo_rootx()
+        target_y = target.winfo_rooty()
+        target_width = target.winfo_width()
+        target_height = target.winfo_height()
+
+        dialog_width = dialog.winfo_width()
+        dialog_height = dialog.winfo_height()
+
+        pos_x = target_x + (target_width - dialog_width) // 2
+        pos_y = target_y + (target_height - dialog_height) // 2
+        dialog.geometry(f"+{pos_x}+{pos_y}")
+
+        dialog.wait_window()
+
+        password = result["value"]
         if password is None:
             raise Exception("Password input canceled by the user.")
         return password
