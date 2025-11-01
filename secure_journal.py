@@ -5,6 +5,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import tomllib
 import base64
 import os
+import shutil
 import sys
 import gzip
 import json
@@ -508,21 +509,46 @@ class SecureJournalApp:
         for i in range(6):
             self.button_frame.columnconfigure(i, weight=1)
 
+        action_button_padding = (6, 4)
+
         ttk.Button(
-            self.button_frame, text="Save Entry", command=self.save_journal_entry, style="Omarchy.TButton"
+            self.button_frame,
+            text="Save",
+            command=self.save_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
         ).grid(row=1, column=0, padx=5)
 
         ttk.Button(
-            self.button_frame, text="Load Entry", command=self.load_journal_entry, style="Omarchy.TButton"
+            self.button_frame,
+            text="Load",
+            command=self.load_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
         ).grid(row=1, column=1, padx=5)
 
         ttk.Button(
-            self.button_frame, text="Delete Entry", command=self.delete_journal_entry, style="Omarchy.TButton"
+            self.button_frame,
+            text="Delete",
+            command=self.delete_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
         ).grid(row=1, column=2, padx=5)
 
         ttk.Button(
-            self.button_frame, text="Clear Entry", command=self.clear_journal_entry, style="Omarchy.TButton"
+            self.button_frame,
+            text="Clear",
+            command=self.clear_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
         ).grid(row=1, column=3, padx=5)
+
+        ttk.Button(
+            self.button_frame,
+            text="Change Password",
+            command=self.change_journal_password,
+            style="Omarchy.TButton",
+        ).grid(row=1, column=4, padx=5)
 
         self.theme_toggle_button = ttk.Button(
             self.button_frame, text="light/dark", command=self.toggle_theme, style="Omarchy.TButton"
@@ -845,6 +871,84 @@ class SecureJournalApp:
             raise Exception("Password input canceled by the user.")
         return password
 
+    def prompt_for_new_password(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Set New Password")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        try:
+            dialog.configure(bg=self.text_entry.cget("bg"))
+        except tk.TclError:
+            pass
+
+        prompt = ttk.Label(
+            dialog, text="Enter and confirm the new password:", style="Omarchy.TLabel"
+        )
+        prompt.pack(padx=20, pady=(20, 10))
+
+        new_password_var = tk.StringVar()
+        confirm_password_var = tk.StringVar()
+
+        new_entry = ttk.Entry(dialog, textvariable=new_password_var, show="*")
+        new_entry.pack(padx=20, pady=(0, 10))
+        new_entry.focus_set()
+
+        confirm_entry = ttk.Entry(dialog, textvariable=confirm_password_var, show="*")
+        confirm_entry.pack(padx=20, pady=(0, 15))
+
+        button_row = ttk.Frame(dialog, style="Omarchy.TFrame")
+        button_row.pack(padx=20, pady=(0, 20))
+
+        result = {"value": None}
+
+        def submit(event=None):
+            new_password = new_password_var.get()
+            confirm_password = confirm_password_var.get()
+            if not new_password:
+                messagebox.showerror(
+                    "Error", "New password cannot be empty.", parent=dialog
+                )
+                return
+            if new_password != confirm_password:
+                messagebox.showerror(
+                    "Error", "Passwords do not match.", parent=dialog
+                )
+                return
+            result["value"] = new_password
+            dialog.destroy()
+
+        def cancel(event=None):
+            result["value"] = None
+            dialog.destroy()
+
+        ttk.Button(
+            button_row, text="OK", command=submit, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            button_row, text="Cancel", command=cancel, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT)
+
+        dialog.bind("<Return>", submit)
+        dialog.bind("<Escape>", cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+        root_x = self.root.winfo_rootx()
+        root_y = self.root.winfo_rooty()
+        root_width = self.root.winfo_width()
+        root_height = self.root.winfo_height()
+        dialog_width = dialog.winfo_width()
+        dialog_height = dialog.winfo_height()
+        pos_x = root_x + (root_width - dialog_width) // 2
+        pos_y = root_y + (root_height - dialog_height) // 2
+        dialog.geometry(f"+{pos_x}+{pos_y}")
+
+        dialog.wait_window()
+        return result["value"]
+
     def derive_key(self, password, salt):
         try:
             kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
@@ -881,6 +985,188 @@ class SecureJournalApp:
         except Exception:
             self.failed_attempts += 1
             raise ValueError("Incorrect password or corrupted data.")
+
+    def change_journal_password(self):
+        self.last_action_time = datetime.now()
+        backup_path = None
+        if os.path.exists(self.filename):
+            try:
+                backup_path = self.create_journal_backup()
+            except Exception as backup_error:
+                messagebox.showwarning(
+                    "Backup Failed",
+                    "The journal could not be backed up before attempting the password change. "
+                    "The process will continue without a backup.\n\n"
+                    f"Details: {backup_error}",
+                )
+
+        data = self.load_json()
+
+        if not data:
+            messagebox.showinfo(
+                "No Entries",
+                "There are no journal entries to re-encrypt. Add an entry first before changing the password.",
+            )
+            return
+
+        try:
+            current_password = self.prompt_for_password()
+        except Exception:
+            return
+
+        new_password = self.prompt_for_new_password()
+        if not new_password:
+            return
+
+        updated_data = []
+        failed_entries = []
+        total_encrypted_entries = 0
+        successful_updates = 0
+        failure_threshold = 0.9
+
+        with secure_password(current_password) as old_pwd:
+            with secure_password(new_password) as new_pwd:
+                for entry in data:
+                    encrypted_entry = entry.get("entry")
+                    if not encrypted_entry:
+                        updated_data.append(entry)
+                        continue
+                    total_encrypted_entries += 1
+                    try:
+                        plaintext = self.decrypt_message(encrypted_entry, old_pwd)
+                    except Exception as error:
+                        failed_entries.append(
+                            {
+                                "date": entry.get("date")
+                                or entry.get("timestamp")
+                                or entry.get("created_at")
+                                or "Unknown entry",
+                                "reason": str(error),
+                            }
+                        )
+                        updated_data.append(entry)
+                        continue
+
+                    encrypted_new = self.encrypt_message(plaintext, new_pwd)
+                    if encrypted_new is None:
+                        failed_entries.append(
+                            {
+                                "date": entry.get("date")
+                                or entry.get("timestamp")
+                                or entry.get("created_at")
+                                or "Unknown entry",
+                                "reason": "Failed to encrypt entry with the new password.",
+                            }
+                        )
+                        updated_data.append(entry)
+                        continue
+
+                    updated_entry = dict(entry)
+                    updated_entry["entry"] = encrypted_new
+                    updated_data.append(updated_entry)
+                    successful_updates += 1
+
+        success_ratio = (
+            successful_updates / total_encrypted_entries
+            if total_encrypted_entries
+            else 1.0
+        )
+
+        log_path = None
+        if failed_entries:
+            try:
+                log_path = self.log_password_rotation_failures(failed_entries)
+            except Exception as log_error:
+                messagebox.showwarning(
+                    "Logging Failed",
+                    "Unable to record failed entry details for the password change.\n\n"
+                    f"Details: {log_error}",
+                )
+
+        if total_encrypted_entries and success_ratio < failure_threshold:
+            details = ""
+            if failed_entries:
+                failed_dates = ", ".join(
+                    sorted({failure["date"] for failure in failed_entries})
+                )
+                details = (
+                    "\n\nEntries that could not be re-encrypted: "
+                    f"{failed_dates}."
+                )
+            log_note = (
+                f"\n\nDetailed information has been saved to: {log_path}"
+                if log_path
+                else ""
+            )
+            backup_note = (
+                f"\n\nA backup of your journal is stored at: {backup_path}"
+                if backup_path
+                else ""
+            )
+            messagebox.showerror(
+                "Password Change Incomplete",
+                "Fewer than 90% of your journal entries could be updated with the new password. "
+                "Your journal has not been modified." + details + log_note + backup_note,
+            )
+            return
+
+        try:
+            self.save_json(updated_data)
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Failed to save the re-encrypted journal entries: {e}"
+            )
+            return
+
+        if failed_entries:
+            failed_details = "\n".join(
+                f"• {failure['date']}: {failure['reason']}" for failure in failed_entries
+            )
+            log_message = (
+                f"\nA record of the affected entries has been written to: {log_path}"
+                if log_path
+                else ""
+            )
+            backup_note = (
+                f"\nYour pre-change journal is backed up at: {backup_path}"
+                if backup_path
+                else ""
+            )
+            messagebox.showwarning(
+                "Password Change Completed with Warnings",
+                "Most entries were updated with the new password, "
+                "but some entries could not be re-encrypted.\n\n"
+                f"{failed_details}{log_message}{backup_note}",
+            )
+        else:
+            messagebox.showinfo(
+                "Success", "All journal entries have been re-encrypted with the new password."
+            )
+        self.hashed_password = None
+
+    def create_journal_backup(self):
+        self._ensure_parent_dir()
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base_name = os.path.basename(self.filename)
+        backup_name = f"{base_name}.bak-{timestamp}"
+        backup_path = os.path.join(os.path.dirname(self.filename), backup_name)
+        shutil.copy2(self.filename, backup_path)
+        return backup_path
+
+    def log_password_rotation_failures(self, failed_entries):
+        if not failed_entries:
+            return None
+        log_path = os.path.join(
+            os.path.dirname(self.filename), "password_rotation_failures.log"
+        )
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            f"[{timestamp}] {failure['date']} - {failure['reason']}"
+            for failure in failed_entries
+        ]
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write("\n".join(lines) + "\n")
+        return log_path
 
     def _ensure_parent_dir(self):
         parent = os.path.dirname(self.filename)
@@ -951,9 +1237,32 @@ class SecureJournalApp:
             raise Exception(f"Failed to save JSON data: {e}")
 
     def load_json(self):
-        if os.path.exists(self.filename):
+        if not os.path.exists(self.filename):
+            return []
+
+        try:
             with gzip.open(self.filename, "rt", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showwarning(
+                "Warning",
+                "The journal file appears to be corrupted or unreadable. "
+                "It will be ignored until it is replaced with a valid backup.",
+            )
+            print(f"Failed to read journal file '{self.filename}': {e}")
+            return []
+
+        if isinstance(data, list):
+            return data
+
+        messagebox.showwarning(
+            "Warning",
+            "The journal file contains unexpected data and will be ignored.",
+        )
+        print(
+            "Unexpected journal file contents. Expected a list of entries, "
+            f"got {type(data).__name__}."
+        )
         return []
 
     def save_journal_entry(self):
