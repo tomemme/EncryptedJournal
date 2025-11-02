@@ -481,9 +481,8 @@ class SecureJournalApp:
         except Exception:
             geometry_scale = 1.0
 
-        platform_bias = self._platform_scale_bias(dpi_scale, tk_scaling)
-
-        scale = max(dpi_scale, tk_scaling, geometry_scale, platform_bias)
+        scale = max(dpi_scale, geometry_scale)
+        scale = self._platform_scale_adjust(scale, dpi_scale, tk_scaling)
         return max(1.0, min(scale, 1.65))
 
     def _get_tk_scaling(self):
@@ -495,23 +494,27 @@ class SecureJournalApp:
         except Exception:
             return 1.0
 
-    def _platform_scale_bias(self, dpi_scale, tk_scaling):
-        bias = 1.0
+    def _platform_scale_adjust(self, base_scale, dpi_scale, tk_scaling):
+        scale = max(1.0, base_scale)
         try:
             if sys.platform == "darwin":
-                # Older macOS builds often report 72 DPI and Tk scaling of 1.0 even on
-                # high-density panels. Push a baseline boost so text stays readable.
-                if dpi_scale < 1.1 and tk_scaling < 1.2:
-                    bias = 1.22
-                else:
-                    bias = max(bias, tk_scaling)
-            elif sys.platform.startswith("win"):
-                bias = max(bias, tk_scaling)
+                # Older macOS panels (especially pre-retina) tend to report 72 DPI and
+                # tk scaling near 1.0. Guarantee a slightly larger baseline so text and
+                # controls land a couple of sizes bigger for readability.
+                if dpi_scale < 1.15 and tk_scaling <= 1.1 and scale < 1.2:
+                    scale = 1.2
+                scale = max(scale, tk_scaling)
             else:
-                bias = max(bias, tk_scaling)
+                # Respect user-adjusted Tk scaling, but temper it so Windows/Linux
+                # builds that already looked correct don't balloon simply because Tk
+                # reports >1.0 scaling.
+                if tk_scaling > 1.0:
+                    tempered = 1.0 + min((tk_scaling - 1.0) * 0.45, 0.15)
+                    scale = max(scale, tempered)
         except Exception:
-            bias = max(1.0, tk_scaling)
-        return bias
+            if tk_scaling > 1.0:
+                scale = max(scale, 1.0 + min((tk_scaling - 1.0) * 0.45, 0.15))
+        return scale
 
     def _get_omarchy_theme_mtime(self):
         try:
