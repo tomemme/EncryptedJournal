@@ -92,6 +92,18 @@ class SecureJournalApp:
         self.current_layout = None
         self._resize_after_id = None
         self._pending_geometry = None
+        self.base_text_size = 13
+        self.base_tree_font_size = 12
+        self.base_heading_font_size = 12
+        self.base_tree_row_height = 26
+        self.tree_row_height = self.base_tree_row_height
+        self.text_font = font.Font(family="Verdana", size=self.base_text_size)
+        self.tree_font = font.Font(family="Verdana", size=self.base_tree_font_size)
+        self.tree_heading_font = font.Font(
+            family="Verdana", size=self.base_heading_font_size, weight="bold"
+        )
+        self.last_typography_scale = None
+
         self.setup_ui()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
@@ -99,6 +111,7 @@ class SecureJournalApp:
         self.omarchy_colors = load_omarchy_theme()
         if self.omarchy_colors:
             self.apply_omarchy_colors()
+        self.apply_responsive_typography()
         self.update_theme_toggle_visibility()
         self.last_omarchy_theme_mtime = self._get_omarchy_theme_mtime()
         self._schedule_omarchy_theme_check()
@@ -237,7 +250,7 @@ class SecureJournalApp:
                 foreground=colors["fg"],
                 fieldbackground=colors["bg"],
                 borderwidth=0,
-                rowheight=24,
+                rowheight=self.tree_row_height,
                 relief="flat",
                 bordercolor=colors["bg"],
                 lightcolor=colors["bg"],
@@ -265,6 +278,7 @@ class SecureJournalApp:
                 foreground=colors["fg"],
                 fieldbackground=colors["bg"],
                 borderwidth=0,
+                rowheight=self.tree_row_height,
                 relief="flat",
                 bordercolor=colors["bg"],
                 lightcolor=colors["bg"],
@@ -396,6 +410,77 @@ class SecureJournalApp:
 
         except Exception as e:
             print("Failed to apply Omarchy theme:", e)
+        finally:
+            # Re-apply responsive fonts in case the theme reset them
+            self.apply_responsive_typography()
+
+    def apply_responsive_typography(self):
+        scale = self._compute_display_scale()
+        self.last_typography_scale = scale
+
+        text_size = max(self.base_text_size, int(round(self.base_text_size * scale)))
+        tree_size = max(
+            self.base_tree_font_size, int(round(self.base_tree_font_size * scale))
+        )
+        heading_size = max(
+            self.base_heading_font_size, int(round(self.base_heading_font_size * scale))
+        )
+        row_height = max(
+            self.base_tree_row_height, int(round(self.base_tree_row_height * scale))
+        )
+
+        self.text_font.configure(size=text_size)
+        self.tree_font.configure(size=tree_size)
+        self.tree_heading_font.configure(size=heading_size)
+        self.tree_row_height = row_height
+
+        try:
+            default_font = font.nametofont("TkDefaultFont")
+            default_font.configure(size=max(11, int(round(11 * scale))))
+        except tk.TclError:
+            pass
+
+        style = ttk.Style()
+        style.configure("Treeview", font=self.tree_font, rowheight=row_height)
+        style.configure("Treeview.Heading", font=self.tree_heading_font)
+        style.configure("Omarchy.Treeview", font=self.tree_font, rowheight=row_height)
+        style.configure("Omarchy.Treeview.Heading", font=self.tree_heading_font)
+        style.configure("Omarchy.TButton", font=self.tree_font)
+        style.configure("TButton", font=self.tree_font)
+        style.configure("Omarchy.TLabel", font=self.tree_font)
+        style.configure("TLabel", font=self.tree_font)
+
+        try:
+            self.text_entry.configure(font=self.text_font)
+        except tk.TclError:
+            pass
+
+    def _compute_display_scale(self):
+        dpi_scale = 1.0
+        try:
+            dpi = float(self.root.winfo_fpixels("1i"))
+            if dpi > 0:
+                dpi_scale = dpi / 96.0
+        except Exception:
+            dpi_scale = 1.0
+
+        geometry_scale = 1.0
+        try:
+            width = self.root.winfo_width()
+            height = self.root.winfo_height()
+            if width <= 1 or height <= 1:
+                self.root.update_idletasks()
+                width = self.root.winfo_width()
+                height = self.root.winfo_height()
+            if width > 1 and height > 1:
+                geometry_scale = min(
+                    1.4, max(1.0, min(width / 1280, height / 720))
+                )
+        except Exception:
+            geometry_scale = 1.0
+
+        scale = max(dpi_scale, geometry_scale)
+        return max(1.0, min(scale, 1.6))
 
     def _get_omarchy_theme_mtime(self):
         try:
@@ -483,8 +568,7 @@ class SecureJournalApp:
         text_scrollbar.grid(row=0, column=1, sticky="ns")
         self.text_entry.configure(yscrollcommand=text_scrollbar.set)
 
-        text_font = font.Font(family="Verdana", size=12)
-        self.text_entry.configure(font=text_font)
+        self.text_entry.configure(font=self.text_font)
         self.text_entry.focus_set()
         self.text_entry.config(insertwidth=5, insertbackground="black")
 
@@ -585,6 +669,7 @@ class SecureJournalApp:
             self.root.after(100, self._initialize_layout)
             return
         self.update_layout(width, height)
+        self.apply_responsive_typography()
 
     def on_root_resize(self, event):
         if event.widget is not self.root:
@@ -602,6 +687,7 @@ class SecureJournalApp:
             return
         width, height = self._pending_geometry
         self.update_layout(width, height)
+        self.apply_responsive_typography()
 
     def update_layout(self, width, height):
         if width <= 1 or height <= 1:
@@ -729,6 +815,7 @@ class SecureJournalApp:
         self.apply_theme()
         self.root.geometry(current_geometry)
         self.root.update_idletasks()
+        self.apply_responsive_typography()
 
     def check_spelling(self):
         try:
