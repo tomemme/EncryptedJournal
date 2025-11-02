@@ -464,6 +464,8 @@ class SecureJournalApp:
         except Exception:
             dpi_scale = 1.0
 
+        tk_scaling = self._get_tk_scaling()
+
         geometry_scale = 1.0
         try:
             width = self.root.winfo_width()
@@ -474,13 +476,42 @@ class SecureJournalApp:
                 height = self.root.winfo_height()
             if width > 1 and height > 1:
                 geometry_scale = min(
-                    1.4, max(1.0, min(width / 1280, height / 720))
+                    1.35, max(1.0, min(width / 1280, height / 720))
                 )
         except Exception:
             geometry_scale = 1.0
 
-        scale = max(dpi_scale, geometry_scale)
-        return max(1.0, min(scale, 1.6))
+        platform_bias = self._platform_scale_bias(dpi_scale, tk_scaling)
+
+        scale = max(dpi_scale, tk_scaling, geometry_scale, platform_bias)
+        return max(1.0, min(scale, 1.65))
+
+    def _get_tk_scaling(self):
+        try:
+            scaling = float(self.root.tk.call("tk", "scaling"))
+            if scaling <= 0:
+                return 1.0
+            return scaling
+        except Exception:
+            return 1.0
+
+    def _platform_scale_bias(self, dpi_scale, tk_scaling):
+        bias = 1.0
+        try:
+            if sys.platform == "darwin":
+                # Older macOS builds often report 72 DPI and Tk scaling of 1.0 even on
+                # high-density panels. Push a baseline boost so text stays readable.
+                if dpi_scale < 1.1 and tk_scaling < 1.2:
+                    bias = 1.22
+                else:
+                    bias = max(bias, tk_scaling)
+            elif sys.platform.startswith("win"):
+                bias = max(bias, tk_scaling)
+            else:
+                bias = max(bias, tk_scaling)
+        except Exception:
+            bias = max(1.0, tk_scaling)
+        return bias
 
     def _get_omarchy_theme_mtime(self):
         try:
