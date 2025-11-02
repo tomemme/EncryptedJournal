@@ -481,9 +481,9 @@ class SecureJournalApp:
         except Exception:
             geometry_scale = 1.0
 
-        scale = max(dpi_scale, geometry_scale)
-        scale = self._platform_scale_adjust(scale, dpi_scale, tk_scaling)
-        return max(1.0, min(scale, 1.65))
+        base_scale = max(1.0, dpi_scale, geometry_scale)
+        scale = self._platform_scale_adjust(base_scale, dpi_scale, tk_scaling)
+        return max(1.0, scale)
 
     def _get_tk_scaling(self):
         try:
@@ -498,23 +498,28 @@ class SecureJournalApp:
         scale = max(1.0, base_scale)
         try:
             if sys.platform == "darwin":
-                # Older macOS panels (especially pre-retina) tend to report 72 DPI and
-                # tk scaling near 1.0. Guarantee a slightly larger baseline so text and
-                # controls land a couple of sizes bigger for readability.
-                if dpi_scale < 1.15 and tk_scaling <= 1.1 and scale < 1.2:
-                    scale = 1.2
-                scale = max(scale, tk_scaling)
+                # Older mac hardware often reports ~72 DPI with tk scaling near 1.0.
+                # Push those panels to a noticeably larger baseline so text climbs
+                # roughly two points while still respecting explicit tk scaling.
+                if dpi_scale < 1.3:
+                    scale = max(scale, 1.22)
+                else:
+                    scale = max(scale, min(dpi_scale, 1.32))
+                if tk_scaling > scale:
+                    scale = tk_scaling
+                return min(scale, 1.38)
             else:
-                # Respect user-adjusted Tk scaling, but temper it so Windows/Linux
-                # builds that already looked correct don't balloon simply because Tk
-                # reports >1.0 scaling.
+                # Temper automatic scaling so Windows/Linux builds that already looked
+                # correct stay close to their original size while still honoring user
+                # adjustments and slight DPI inflation.
+                tempered = 1.0 + max(0.0, base_scale - 1.0) * 0.5
+                scale = max(1.0, min(tempered, 1.12))
                 if tk_scaling > 1.0:
-                    tempered = 1.0 + min((tk_scaling - 1.0) * 0.45, 0.15)
-                    scale = max(scale, tempered)
+                    scale = max(scale, min(1.0 + (tk_scaling - 1.0) * 0.4, 1.15))
+                return min(scale, 1.18)
         except Exception:
-            if tk_scaling > 1.0:
-                scale = max(scale, 1.0 + min((tk_scaling - 1.0) * 0.45, 0.15))
-        return scale
+            pass
+        return min(scale, 1.3)
 
     def _get_omarchy_theme_mtime(self):
         try:
