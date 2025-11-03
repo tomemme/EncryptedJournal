@@ -28,10 +28,25 @@ except ImportError:
 
 @contextmanager
 def secure_password(password):
+    """Provide a mutable buffer for a password and wipe it afterwards."""
+
+    secret = None
     try:
-        yield password
+        if isinstance(password, bytearray):
+            secret = password
+        elif isinstance(password, (bytes, memoryview)):
+            secret = bytearray(password)
+        elif isinstance(password, str):
+            secret = bytearray(password, "utf-8")
+        else:
+            raise TypeError("Password must be bytes-like or str")
+
+        yield secret
     finally:
-        del password
+        if secret is not None:
+            for i in range(len(secret)):
+                secret[i] = 0
+        del secret
         gc.collect()
 
 
@@ -78,9 +93,7 @@ class SecureJournalApp:
         self.root = root
         self.root.title("Secure Encrypted Journal")
         self.set_app_icon()
-        self.session_timeout = 300  # 5 minutes
         self.last_action_time = datetime.now()
-        self.hashed_password = None
         # Use a unified, script-relative path for the journal file
         self.filename = self.resource_path("journal.json.gz")
         self.is_modified = False
@@ -867,8 +880,7 @@ class SecureJournalApp:
         dialog.wait_window()
 
         password = result["value"]
-        if password is None:
-            raise Exception("Password input canceled by the user.")
+        password_var.set("")
         return password
 
     def prompt_for_new_password(self):
@@ -916,10 +928,15 @@ class SecureJournalApp:
                     "Error", "Passwords do not match.", parent=dialog
                 )
                 return
-            result["value"] = new_password
+            result_value = new_password
+            new_password_var.set("")
+            confirm_password_var.set("")
+            result["value"] = result_value
             dialog.destroy()
 
         def cancel(event=None):
+            new_password_var.set("")
+            confirm_password_var.set("")
             result["value"] = None
             dialog.destroy()
 
@@ -952,7 +969,16 @@ class SecureJournalApp:
     def derive_key(self, password, salt):
         try:
             kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
-            key = kdf.derive(password.encode())
+            if isinstance(password, memoryview):
+                password_bytes = password.tobytes()
+            elif isinstance(password, (bytes, bytearray)):
+                password_bytes = password
+            elif isinstance(password, str):
+                password_bytes = password.encode()
+            else:
+                raise TypeError("Password must be bytes-like or str")
+
+            key = kdf.derive(password_bytes)
             self.failed_attempts = 0
             return key
         except Exception:
@@ -1009,9 +1035,8 @@ class SecureJournalApp:
             )
             return
 
-        try:
-            current_password = self.prompt_for_password()
-        except Exception:
+        current_password = self.prompt_for_password()
+        if current_password is None:
             return
 
         new_password = self.prompt_for_new_password()
@@ -1065,6 +1090,9 @@ class SecureJournalApp:
                     updated_entry["entry"] = encrypted_new
                     updated_data.append(updated_entry)
                     successful_updates += 1
+
+        current_password = None
+        new_password = None
 
         success_ratio = (
             successful_updates / total_encrypted_entries
@@ -1142,7 +1170,6 @@ class SecureJournalApp:
             messagebox.showinfo(
                 "Success", "All journal entries have been re-encrypted with the new password."
             )
-        self.hashed_password = None
 
     def create_journal_backup(self):
         self._ensure_parent_dir()
@@ -1268,13 +1295,12 @@ class SecureJournalApp:
     def save_journal_entry(self):
         self.last_action_time = datetime.now()
 
-        if self.check_session_timeout() or not self.hashed_password:
-            password = self.prompt_for_password()
-            if password is None:
-                return
-            self.hashed_password = password
+        password = self.prompt_for_password()
+        if password is None:
+            return
 
-        with secure_password(self.hashed_password) as pwd:
+        with secure_password(password) as pwd:
+            password = None
             try:
                 journal_entry = self.text_entry.get("1.0", tk.END).strip()
                 date_str = self.date_entry.get().strip()
@@ -1320,17 +1346,13 @@ class SecureJournalApp:
 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save entry: {str(e)}")
-                return
-            finally:
-                self.hashed_password = None
 
     def load_journal_entry(self):
         self.last_action_time = datetime.now()
-        if self.check_session_timeout() or not self.hashed_password:
-            password = self.prompt_for_password()
-            if password is None:
-                return
-            self.hashed_password = password
+
+        password = self.prompt_for_password()
+        if password is None:
+            return
 
         try:
             selected_item = self.treeview.selection()[0]
@@ -1339,9 +1361,11 @@ class SecureJournalApp:
                 data = self.load_json()
                 for entry in data:
                     if entry.get("date") == selected_date:
-                        decrypted_entry = self.decrypt_message(
-                            entry["entry"], self.hashed_password
-                        )
+                        with secure_password(password) as pwd:
+                            password = None
+                            decrypted_entry = self.decrypt_message(
+                                entry["entry"], pwd
+                            )
                         self.text_entry.delete("1.0", tk.END)
                         self.text_entry.insert(tk.END, decrypted_entry)
                         self.date_entry.delete(0, tk.END)
@@ -1356,22 +1380,15 @@ class SecureJournalApp:
                 messagebox.showinfo("Information", "Please select a date, not a month.")
         except ValueError as e:
             messagebox.showerror("Error", str(e))
-            self.hashed_password = None
         except IndexError:
             messagebox.showwarning("Warning", "Please select a date from the list.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load entry: {e}")
-            self.hashed_password = None
         finally:
-            self.hashed_password = None
+            password = None
 
     def delete_journal_entry(self):
         self.last_action_time = datetime.now()
-        if self.check_session_timeout() or not self.hashed_password:
-            password = self.prompt_for_password()
-            if password is None:
-                return
-            self.hashed_password = password
 
         try:
             selected_item = self.treeview.selection()[0]
@@ -1402,8 +1419,6 @@ class SecureJournalApp:
             messagebox.showwarning("Warning", "Please select a date from the list.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to delete entry: {e}")
-        finally:
-            self.hashed_password = None
 
     def clear_journal_entry(self):
         self.text_entry.delete("1.0", tk.END)
@@ -1438,17 +1453,6 @@ class SecureJournalApp:
             parent = self.treeview.insert("", "end", text=year_month, open=False)
             for date in dates:
                 self.treeview.insert(parent, "end", text=date)
-
-    def check_session_timeout(self):
-        if (datetime.now() - self.last_action_time).seconds > self.session_timeout:
-            messagebox.showwarning(
-                "Session Timeout",
-                "Your session has expired. Please enter your password again.",
-            )
-            self.hashed_password = None
-            return True
-        return False
-
 
 if __name__ == "__main__":
     root = tk.Tk()
