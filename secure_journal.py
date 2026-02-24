@@ -10,10 +10,15 @@ import sys
 import gzip
 import json
 from datetime import datetime
+import getpass
 try:
     import enchant
 except ImportError:
     enchant = None
+try:
+    import keyring
+except ImportError:
+    keyring = None
 import re
 import string
 import secrets
@@ -98,8 +103,13 @@ class SecureJournalApp:
         self.root.title("Secure Encrypted Journal")
         self.set_app_icon()
         self.last_action_time = datetime.now()
-        # Use a unified, script-relative path for the journal file
-        self.filename = self.resource_path("journal.json.gz")
+        self.keyring_service = "encrypted-journal"
+        self.keyring_username = os.environ.get(
+            "ENCRYPTED_JOURNAL_KEYRING_USER", getpass.getuser() or "default"
+        )
+        self.keyring_enabled = self._env_bool("ENCRYPTED_JOURNAL_USE_KEYRING", False)
+        self.keyring_available = keyring is not None and self.keyring_enabled
+        self.filename = self._resolve_journal_path()
         self.is_modified = False
         self.entry_loaded = False
         self.failed_attempts = 0
@@ -111,6 +121,7 @@ class SecureJournalApp:
         self.help_content_label = None
         self.help_overlay_title_label = None
         self.help_overlay_close_button = None
+        self.password_remember_var = None
         self._init_spellchecker()
         self.current_theme = "dark"
         self.current_layout = None
@@ -139,6 +150,62 @@ class SecureJournalApp:
         self.update_theme_toggle_visibility()
         self.last_omarchy_theme_mtime = self._get_omarchy_theme_mtime()
         self._schedule_omarchy_theme_check()
+
+    def _env_bool(self, name, default=False):
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _default_xdg_journal_path(self):
+        xdg_data_home = os.environ.get(
+            "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
+        )
+        return os.path.join(
+            os.path.expanduser(xdg_data_home), "encrypted-journal", "journal.json.gz"
+        )
+
+    def _legacy_journal_path(self):
+        return self.resource_path("journal.json.gz")
+
+    def _resolve_journal_path(self):
+        custom_path = os.environ.get("ENCRYPTED_JOURNAL_FILE")
+        if custom_path:
+            return os.path.abspath(os.path.expanduser(custom_path))
+
+        default_path = self._default_xdg_journal_path()
+        legacy_path = self._legacy_journal_path()
+
+        if os.path.exists(default_path):
+            return default_path
+        if os.path.exists(legacy_path):
+            return legacy_path
+        return default_path
+
+    def _keyring_get_password(self):
+        if not self.keyring_available:
+            return None
+        try:
+            return keyring.get_password(self.keyring_service, self.keyring_username)
+        except Exception as error:
+            print(f"Keyring read failed: {error}")
+            return None
+
+    def _keyring_set_password(self, password):
+        if not self.keyring_available or not password:
+            return
+        try:
+            keyring.set_password(self.keyring_service, self.keyring_username, password)
+        except Exception as error:
+            print(f"Keyring write failed: {error}")
+
+    def _keyring_clear_password(self):
+        if not self.keyring_available:
+            return
+        try:
+            keyring.delete_password(self.keyring_service, self.keyring_username)
+        except Exception:
+            pass
 
     def _init_spellchecker(self):
         if enchant is None:
@@ -197,6 +264,37 @@ class SecureJournalApp:
         # Perceived luminance heuristic for readable foreground selection.
         luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
         return "#111111" if luminance > 0.62 else "#f8fafc"
+
+    def _get_selection_colors(self):
+        if getattr(self, "omarchy_colors", None):
+            bg = self.omarchy_colors["accent"]
+            fg = self._best_text_color(bg)
+            return bg, fg
+        if self.current_theme == "light":
+            bg = "#3b82f6"
+            fg = self._best_text_color(bg)
+            return bg, fg
+        bg = "#7c93f6"
+        fg = self._best_text_color(bg)
+        return bg, fg
+
+    def _apply_text_selection_style(self):
+        select_bg, select_fg = self._get_selection_colors()
+        widgets = []
+        if hasattr(self, "text_entry"):
+            widgets.append(self.text_entry)
+        if hasattr(self, "date_entry"):
+            widgets.append(self.date_entry)
+
+        for widget in widgets:
+            try:
+                widget.configure(
+                    selectbackground=select_bg,
+                    selectforeground=select_fg,
+                    inactiveselectbackground=select_bg,
+                )
+            except tk.TclError:
+                pass
 
     def _apply_help_button_style(self):
         if not hasattr(self, "help_button"):
@@ -364,6 +462,7 @@ class SecureJournalApp:
                 fg=colors["fg"],
                 insertbackground=colors["cursor"]
             )
+            self._apply_text_selection_style()
 
             # --- ttk widget styling (buttons + treeview) ---
             style = ttk.Style()
@@ -783,6 +882,7 @@ class SecureJournalApp:
         self.date_label.pack(side=tk.LEFT, padx=(0, 8))
         self.date_entry = tk.Entry(self.date_inner, width=12)
         self.date_entry.pack(side=tk.LEFT)
+        self._apply_text_selection_style()
 
         self.help_button = tk.Button(
             self.date_frame,
@@ -830,6 +930,7 @@ class SecureJournalApp:
         self.text_entry.configure(font=self.text_font)
         self.text_entry.focus_set()
         self.text_entry.config(insertwidth=5, insertbackground="black")
+        self._apply_text_selection_style()
 
         # spell check tagging
         self.text_entry.tag_config("misspelled", foreground="red", underline=True)
@@ -1049,6 +1150,7 @@ class SecureJournalApp:
     def apply_theme(self):
         try:
             self.root.tk.call("set_theme", self.current_theme)
+            self._apply_text_selection_style()
             self._apply_help_button_style()
             self._style_help_overlay()
         except tk.TclError as e:
@@ -1169,9 +1271,24 @@ class SecureJournalApp:
         prompt.pack(padx=20, pady=(20, 10))
 
         password_var = tk.StringVar()
+        stored_password = self._keyring_get_password()
+        if stored_password:
+            password_var.set(stored_password)
         entry = ttk.Entry(dialog, textvariable=password_var, show="*")
         entry.pack(padx=20, pady=(0, 15))
         entry.focus_set()
+
+        self.password_remember_var = tk.IntVar(value=1 if stored_password else 0)
+        if self.keyring_available:
+            remember_checkbox = tk.Checkbutton(
+                dialog,
+                text="Remember password on this machine",
+                variable=self.password_remember_var,
+                anchor="w",
+                padx=16,
+                pady=2,
+            )
+            remember_checkbox.pack(fill=tk.X, padx=4, pady=(0, 8))
 
         button_row = ttk.Frame(dialog, style="Omarchy.TFrame")
         button_row.pack(padx=20, pady=(0, 20))
@@ -1179,7 +1296,13 @@ class SecureJournalApp:
         result = {"value": None}
 
         def submit(event=None):
-            result["value"] = password_var.get()
+            password_value = password_var.get()
+            if self.keyring_available:
+                if self.password_remember_var.get():
+                    self._keyring_set_password(password_value)
+                else:
+                    self._keyring_clear_password()
+            result["value"] = password_value
             dialog.destroy()
 
         def cancel(event=None):
@@ -1405,6 +1528,10 @@ class SecureJournalApp:
         new_password = self.prompt_for_new_password()
         if not new_password:
             return
+        remember_password_in_keyring = (
+            self.keyring_available and self._keyring_get_password() is not None
+        )
+        keyring_new_password = new_password
 
         encrypted_entries = [entry.get("entry") for entry in data if entry.get("entry")]
         if encrypted_entries:
@@ -1519,6 +1646,9 @@ class SecureJournalApp:
                 "Error", f"Failed to save the re-encrypted journal entries: {e}"
             )
             return
+
+        if remember_password_in_keyring:
+            self._keyring_set_password(keyring_new_password)
 
         if failed_entries:
             failed_details = "\n".join(
