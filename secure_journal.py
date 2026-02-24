@@ -106,6 +106,11 @@ class SecureJournalApp:
         self.max_attempts = 5
         self.dictionary = None
         self.spellcheck_enabled = False
+        self.help_overlay = None
+        self.help_overlay_content = None
+        self.help_content_label = None
+        self.help_overlay_title_label = None
+        self.help_overlay_close_button = None
         self._init_spellchecker()
         self.current_theme = "dark"
         self.current_layout = None
@@ -147,6 +152,194 @@ class SecureJournalApp:
             self.spellcheck_enabled = False
             print(f"Spellcheck disabled: {error}")
 
+    def _get_help_palette(self):
+        if getattr(self, "omarchy_colors", None):
+            return {
+                "bg": self.omarchy_colors["bg"],
+                "fg": self.omarchy_colors["fg"],
+                "accent": self.omarchy_colors["accent"],
+            }
+        if self.current_theme == "light":
+            return {"bg": "#f5f6fa", "fg": "#1f2937", "accent": "#3b82f6"}
+        return {"bg": "#0f111a", "fg": "#e5e7eb", "accent": "#7c93f6"}
+
+    def _blend_hex(self, color, target, factor):
+        color = color.lstrip("#")
+        target = target.lstrip("#")
+        if len(color) != 6 or len(target) != 6:
+            return f"#{color}"
+        try:
+            r = int(color[0:2], 16)
+            g = int(color[2:4], 16)
+            b = int(color[4:6], 16)
+            rt = int(target[0:2], 16)
+            gt = int(target[2:4], 16)
+            bt = int(target[4:6], 16)
+        except ValueError:
+            return f"#{color}"
+
+        nr = min(255, max(0, int(r + (rt - r) * factor)))
+        ng = min(255, max(0, int(g + (gt - g) * factor)))
+        nb = min(255, max(0, int(b + (bt - b) * factor)))
+        return f"#{nr:02x}{ng:02x}{nb:02x}"
+
+    def _best_text_color(self, background_hex):
+        hex_color = background_hex.lstrip("#")
+        if len(hex_color) != 6:
+            return "#ffffff"
+        try:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+        except ValueError:
+            return "#ffffff"
+
+        # Perceived luminance heuristic for readable foreground selection.
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+        return "#111111" if luminance > 0.62 else "#f8fafc"
+
+    def _apply_help_button_style(self):
+        if not hasattr(self, "help_button"):
+            return
+        colors = self._get_help_palette()
+        button_fg = self._best_text_color(colors["accent"])
+        try:
+            self.help_button.configure(
+                bg=colors["accent"],
+                fg=button_fg,
+                activebackground=colors["accent"],
+                activeforeground=button_fg,
+                highlightbackground=colors["bg"],
+                highlightcolor=colors["accent"],
+            )
+        except tk.TclError:
+            pass
+
+    def _style_help_overlay(self):
+        if not self.help_overlay or not self.help_overlay.winfo_exists():
+            return
+
+        colors = self._get_help_palette()
+        button_fg = self._best_text_color(colors["accent"])
+        try:
+            self.help_overlay.configure(bg=colors["bg"])
+            if hasattr(self, "help_overlay_content"):
+                self.help_overlay_content.configure(bg=colors["bg"])
+            if self.help_overlay_title_label:
+                self.help_overlay_title_label.configure(
+                    bg=colors["bg"], fg=colors["fg"]
+                )
+            if self.help_content_label:
+                self.help_content_label.configure(bg=colors["bg"], fg=colors["fg"])
+            if self.help_overlay_close_button:
+                self.help_overlay_close_button.configure(
+                    bg=colors["accent"],
+                    fg=button_fg,
+                    activebackground=colors["accent"],
+                    activeforeground=button_fg,
+                    highlightbackground=colors["bg"],
+                )
+        except tk.TclError:
+            pass
+
+    def _position_help_overlay(self):
+        if not self.help_overlay or not self.help_overlay.winfo_exists():
+            return
+
+        self.root.update_idletasks()
+        width = max(640, self.root.winfo_width())
+        height = max(460, self.root.winfo_height())
+        x = self.root.winfo_rootx()
+        y = self.root.winfo_rooty()
+        self.help_overlay.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _sync_help_overlay_geometry(self):
+        if not self.help_overlay or not self.help_overlay.winfo_exists():
+            return
+        self._position_help_overlay()
+        if self.help_content_label and self.help_content_label.winfo_exists():
+            wrap = max(520, self.help_overlay.winfo_width() - 120)
+            self.help_content_label.configure(wraplength=wrap)
+        self.help_overlay.after(140, self._sync_help_overlay_geometry)
+
+    def close_help_overlay(self, event=None):
+        if self.help_overlay and self.help_overlay.winfo_exists():
+            self.help_overlay.destroy()
+        self.help_overlay = None
+        self.help_overlay_content = None
+        self.help_content_label = None
+        self.help_overlay_title_label = None
+        self.help_overlay_close_button = None
+
+    def show_help_overlay(self):
+        if self.help_overlay and self.help_overlay.winfo_exists():
+            try:
+                self.help_overlay.lift()
+                self.help_overlay.focus_force()
+            except tk.TclError:
+                pass
+            return
+
+        overlay = tk.Toplevel(self.root)
+        self.help_overlay = overlay
+        overlay.title("Journal Help")
+        overlay.transient(self.root)
+        overlay.grab_set()
+        overlay.resizable(True, True)
+        overlay.protocol("WM_DELETE_WINDOW", self.close_help_overlay)
+        overlay.bind("<Escape>", self.close_help_overlay)
+
+        self._position_help_overlay()
+
+        self.help_overlay_content = tk.Frame(overlay, padx=28, pady=24)
+        self.help_overlay_content.pack(fill=tk.BOTH, expand=True)
+
+        header = tk.Frame(self.help_overlay_content)
+        header.pack(fill=tk.X, pady=(0, 14))
+
+        self.help_overlay_title_label = tk.Label(
+            header, text="How To Use Encrypted Journal", font=("Verdana", 15, "bold")
+        )
+        self.help_overlay_title_label.pack(side=tk.LEFT)
+
+        self.help_overlay_close_button = tk.Button(
+            header,
+            text="Close",
+            command=self.close_help_overlay,
+            bd=0,
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        )
+        self.help_overlay_close_button.pack(side=tk.RIGHT)
+
+        help_text = (
+            "1. Enter a date (YYYY-MM-DD), or leave it blank to use today.\n\n"
+            "2. Write your journal entry in the text area.\n\n"
+            "3. Click Save and enter your password.\n\n"
+            "4. To read an entry, select a date on the right and click Load.\n\n"
+            "5. To remove an entry, select a date and click Delete.\n\n"
+            "6. Use Change Password to re-encrypt all entries with a new password.\n\n"
+            "Tips:\n"
+            "- Keep your password in a safe place. Lost passwords cannot be recovered.\n"
+            "- Backups are created automatically when changing passwords."
+        )
+
+        self.help_content_label = tk.Label(
+            self.help_overlay_content,
+            text=help_text,
+            justify=tk.LEFT,
+            anchor="nw",
+            font=("Verdana", 11),
+            wraplength=max(600, self.root.winfo_width() - 120),
+        )
+        self.help_content_label.pack(fill=tk.BOTH, expand=True)
+
+        self._style_help_overlay()
+        overlay.lift()
+        overlay.focus_force()
+        self._sync_help_overlay_geometry()
+
     def apply_omarchy_colors(self):
         """
         Inject Omarchy colors into the azure theme before applying it.
@@ -175,36 +368,16 @@ class SecureJournalApp:
             # --- ttk widget styling (buttons + treeview) ---
             style = ttk.Style()
 
-            def blend(color, target, factor):
-                """Blend a hex color toward a target color by a factor (0-1)."""
-                color = color.lstrip("#")
-                target = target.lstrip("#")
-                if len(color) != 6 or len(target) != 6:
-                    return f"#{color}"
-                try:
-                    r = int(color[0:2], 16)
-                    g = int(color[2:4], 16)
-                    b = int(color[4:6], 16)
-                    rt = int(target[0:2], 16)
-                    gt = int(target[2:4], 16)
-                    bt = int(target[4:6], 16)
-                except ValueError:
-                    return f"#{color}"
-
-                nr = min(255, max(0, int(r + (rt - r) * factor)))
-                ng = min(255, max(0, int(g + (gt - g) * factor)))
-                nb = min(255, max(0, int(b + (bt - b) * factor)))
-                return f"#{nr:02x}{ng:02x}{nb:02x}"
-
-            accent_hover = blend(colors["accent"], "ffffff", 0.18)
-            accent_pressed = blend(colors["accent"], "000000", 0.22)
-            accent_disabled = blend(colors["accent"], colors["bg"], 0.55)
-            text_disabled = blend(colors["fg"], colors["bg"], 0.65)
+            accent_hover = self._blend_hex(colors["accent"], "ffffff", 0.18)
+            accent_pressed = self._blend_hex(colors["accent"], "000000", 0.22)
+            accent_disabled = self._blend_hex(colors["accent"], colors["bg"], 0.55)
+            button_fg = self._best_text_color(colors["accent"])
+            text_disabled = self._blend_hex(button_fg, colors["bg"], 0.65)
 
             style.configure(
                 "Omarchy.TButton",
                 background=colors["accent"],
-                foreground=colors["fg"],
+                foreground=button_fg,
                 borderwidth=0,
                 focusthickness=1,
                 focuscolor=colors["accent"],
@@ -219,7 +392,7 @@ class SecureJournalApp:
                     ("disabled", accent_disabled),
                 ],
                 foreground=[
-                    ("!disabled", colors["fg"]),
+                    ("!disabled", button_fg),
                     ("disabled", text_disabled)
                 ]
             )
@@ -439,6 +612,9 @@ class SecureJournalApp:
                 except Exception:
                     pass
 
+            self._apply_help_button_style()
+            self._style_help_overlay()
+
         except Exception as e:
             print("Failed to apply Omarchy theme:", e)
         finally:
@@ -607,6 +783,19 @@ class SecureJournalApp:
         self.date_label.pack(side=tk.LEFT, padx=(0, 8))
         self.date_entry = tk.Entry(self.date_inner, width=12)
         self.date_entry.pack(side=tk.LEFT)
+
+        self.help_button = tk.Button(
+            self.date_frame,
+            text="?",
+            command=self.show_help_overlay,
+            bd=0,
+            padx=8,
+            pady=4,
+            font=("Verdana", 10, "bold"),
+            cursor="hand2",
+        )
+        self.help_button.place(relx=1.0, x=-8, y=4, anchor="ne")
+        self._apply_help_button_style()
 
         # --- Responsive split container
         self.split = tk.PanedWindow(
@@ -860,6 +1049,8 @@ class SecureJournalApp:
     def apply_theme(self):
         try:
             self.root.tk.call("set_theme", self.current_theme)
+            self._apply_help_button_style()
+            self._style_help_overlay()
         except tk.TclError as e:
             print(f"Error applying theme: {e}")
             messagebox.showerror(
