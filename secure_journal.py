@@ -1680,8 +1680,26 @@ class SecureJournalApp:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         base_name = os.path.basename(self.filename)
         backup_name = f"{base_name}.bak-{timestamp}"
-        backup_path = os.path.join(os.path.dirname(self.filename), backup_name)
+        backup_dir = os.path.dirname(self.filename) or "."
+        backup_path = os.path.join(backup_dir, backup_name)
         shutil.copy2(self.filename, backup_path)
+
+        max_backups = 10
+        backup_prefix = f"{base_name}.bak-"
+        backups = sorted(
+            [
+                os.path.join(backup_dir, file_name)
+                for file_name in os.listdir(backup_dir)
+                if file_name.startswith(backup_prefix)
+            ],
+            reverse=True,
+        )
+        for old_backup in backups[max_backups:]:
+            try:
+                os.remove(old_backup)
+            except OSError:
+                pass
+
         return backup_path
 
     def log_password_rotation_failures(self, failed_entries):
