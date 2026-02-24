@@ -10,7 +10,10 @@ import sys
 import gzip
 import json
 from datetime import datetime
-import enchant
+try:
+    import enchant
+except ImportError:
+    enchant = None
 import re
 import string
 import secrets
@@ -101,7 +104,9 @@ class SecureJournalApp:
         self.entry_loaded = False
         self.failed_attempts = 0
         self.max_attempts = 5
-        self.dictionary = enchant.Dict("en_US")
+        self.dictionary = None
+        self.spellcheck_enabled = False
+        self._init_spellchecker()
         self.current_theme = "dark"
         self.current_layout = None
         self._resize_after_id = None
@@ -129,6 +134,18 @@ class SecureJournalApp:
         self.update_theme_toggle_visibility()
         self.last_omarchy_theme_mtime = self._get_omarchy_theme_mtime()
         self._schedule_omarchy_theme_check()
+
+    def _init_spellchecker(self):
+        if enchant is None:
+            print("Spellcheck disabled: pyenchant is not installed.")
+            return
+        try:
+            self.dictionary = enchant.Dict("en_US")
+            self.spellcheck_enabled = True
+        except Exception as error:
+            self.dictionary = None
+            self.spellcheck_enabled = False
+            print(f"Spellcheck disabled: {error}")
 
     def apply_omarchy_colors(self):
         """
@@ -871,6 +888,12 @@ class SecureJournalApp:
         self.apply_responsive_typography()
 
     def check_spelling(self):
+        if not self.spellcheck_enabled or self.dictionary is None:
+            try:
+                self.text_entry.tag_remove("misspelled", "1.0", tk.END)
+            except tk.TclError:
+                pass
+            return
         try:
             text_content = self.text_entry.get("1.0", tk.END)
             self.text_entry.tag_remove("misspelled", "1.0", tk.END)
@@ -879,15 +902,9 @@ class SecureJournalApp:
                 stripped_word = word.strip(string.punctuation)
                 if stripped_word and not self.dictionary.check(stripped_word):
                     self.text_entry.tag_add("misspelled", start_idx, end_idx)
-        except enchant.errors.DictNotFoundError:
-            messagebox.showerror(
-                "Error",
-                "Dictionary not found. Please ensure Enchant is properly installed.",
-            )
         except Exception as e:
-            messagebox.showerror(
-                "Error", f"An error occurred during spell checking: {e}"
-            )
+            self.spellcheck_enabled = False
+            print(f"Spellcheck disabled due to runtime error: {e}")
 
     def get_words_positions(self, text):
         words_positions = []
@@ -900,6 +917,8 @@ class SecureJournalApp:
         return words_positions
 
     def show_suggestions(self, event):
+        if not self.spellcheck_enabled or self.dictionary is None:
+            return
         try:
             index = self.text_entry.index(f"@{event.x},{event.y}")
             tags = self.text_entry.tag_names(index)

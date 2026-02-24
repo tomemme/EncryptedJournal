@@ -31,6 +31,13 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
     {"date": "2025-02-21", "entry": "another_base64_encoded_encrypted_data"}
 ]
 
+# Smoke Test
+Run the local smoke test to verify core journal flows (save, load, delete, and password change):
+
+```bash
+python scripts/smoke_test.py
+```
+
 # Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
 
