@@ -1520,6 +1520,10 @@ class SecureJournalApp:
             selected_item = self.treeview.selection()[0]
             selected_date = self.treeview.item(selected_item, "text")
             if self.treeview.parent(selected_item):
+                password = self.prompt_for_password()
+                if password is None:
+                    return
+
                 confirm = messagebox.askyesno(
                     "Confirm Delete",
                     f"Are you sure you want to delete the entry for {selected_date}?",
@@ -1528,6 +1532,25 @@ class SecureJournalApp:
                     return
 
                 data = self.load_json()
+                selected_entry = next(
+                    (entry for entry in data if entry.get("date") == selected_date),
+                    None,
+                )
+                if not selected_entry:
+                    messagebox.showwarning(
+                        "Warning", "No entry found for the selected date."
+                    )
+                    return
+
+                encrypted_entry = selected_entry.get("entry")
+                if encrypted_entry:
+                    try:
+                        with secure_password(password) as pwd:
+                            self.decrypt_message(encrypted_entry, pwd)
+                    except ValueError as e:
+                        messagebox.showerror("Error", str(e))
+                        return
+
                 new_data = [
                     entry for entry in data if entry.get("date") != selected_date
                 ]
@@ -1545,6 +1568,8 @@ class SecureJournalApp:
             messagebox.showwarning("Warning", "Please select a date from the list.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to delete entry: {e}")
+        finally:
+            password = None
 
     def clear_journal_entry(self):
         self.text_entry.delete("1.0", tk.END)
