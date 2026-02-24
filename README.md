@@ -38,6 +38,21 @@ Run the local smoke test to verify core journal flows (save, load, delete, and p
 python scripts/smoke_test.py
 ```
 
+# Arch / Omarchy Packaging
+This repo includes Arch packaging files at `packaging/arch/` so the app can be published to AUR and discovered from Omarchy package search tools.
+
+## Build Locally (Arch)
+```bash
+cd packaging/arch
+makepkg -si
+```
+
+## Publish To AUR
+1. Create an AUR package repo named `encrypted-journal-git`.
+2. Copy `PKGBUILD`, `.SRCINFO`, `encrypted-journal.desktop`, and `encrypted-journal-launcher` from `packaging/arch/`.
+3. Commit and push to the AUR repo.
+4. After AUR indexing, users can search/install it from Omarchy package installer UIs.
+
 # Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.
 
