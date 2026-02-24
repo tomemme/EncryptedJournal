@@ -15,6 +15,7 @@ import re
 import string
 import secrets
 import gc
+import tempfile
 from contextlib import contextmanager
 
 # Windows-specific imports for file permissions
@@ -986,22 +987,7 @@ class SecureJournalApp:
         dialog.bind("<Escape>", cancel)
         dialog.protocol("WM_DELETE_WINDOW", cancel)
 
-        # Center the dialog over the journal tile (editor container)
-        self.root.update_idletasks()
-        dialog.update_idletasks()
-
-        target = self.editor_container
-        target_x = target.winfo_rootx()
-        target_y = target.winfo_rooty()
-        target_width = target.winfo_width()
-        target_height = target.winfo_height()
-
-        dialog_width = dialog.winfo_width()
-        dialog_height = dialog.winfo_height()
-
-        pos_x = target_x + (target_width - dialog_width) // 2
-        pos_y = target_y + (target_height - dialog_height) // 2
-        dialog.geometry(f"+{pos_x}+{pos_y}")
+        self._show_modal_dialog(dialog, focus_widget=entry)
 
         dialog.wait_window()
 
@@ -1077,20 +1063,65 @@ class SecureJournalApp:
         dialog.bind("<Escape>", cancel)
         dialog.protocol("WM_DELETE_WINDOW", cancel)
 
-        self.root.update_idletasks()
-        dialog.update_idletasks()
-        root_x = self.root.winfo_rootx()
-        root_y = self.root.winfo_rooty()
-        root_width = self.root.winfo_width()
-        root_height = self.root.winfo_height()
-        dialog_width = dialog.winfo_width()
-        dialog_height = dialog.winfo_height()
-        pos_x = root_x + (root_width - dialog_width) // 2
-        pos_y = root_y + (root_height - dialog_height) // 2
-        dialog.geometry(f"+{pos_x}+{pos_y}")
+        self._show_modal_dialog(dialog, focus_widget=new_entry)
 
         dialog.wait_window()
         return result["value"]
+
+    def _show_modal_dialog(self, dialog, focus_widget=None):
+        def center_dialog():
+            if not dialog.winfo_exists():
+                return
+            self.root.update_idletasks()
+            dialog.update_idletasks()
+
+            target = self.editor_container
+            try:
+                if not target.winfo_ismapped():
+                    target = self.root
+            except tk.TclError:
+                target = self.root
+
+            parent_x = target.winfo_rootx()
+            parent_y = target.winfo_rooty()
+            parent_width = target.winfo_width()
+            parent_height = target.winfo_height()
+            dialog_width = dialog.winfo_width()
+            dialog_height = dialog.winfo_height()
+
+            pos_x = parent_x + (parent_width - dialog_width) // 2
+            pos_y = parent_y + (parent_height - dialog_height) // 2
+            max_x = max(0, dialog.winfo_screenwidth() - dialog_width)
+            max_y = max(0, dialog.winfo_screenheight() - dialog_height)
+            pos_x = max(0, min(pos_x, max_x))
+            pos_y = max(0, min(pos_y, max_y))
+            dialog.geometry(f"+{pos_x}+{pos_y}")
+
+        # Pre-position before mapping, then re-center after map because some
+        # Wayland/tiling WMs report stale coordinates on first render.
+        dialog.withdraw()
+        center_dialog()
+        dialog.deiconify()
+        try:
+            dialog.wait_visibility()
+        except tk.TclError:
+            pass
+        center_dialog()
+        for delay in (40, 100, 180, 300):
+            dialog.after(delay, center_dialog)
+
+        try:
+            dialog.lift()
+            dialog.attributes("-topmost", True)
+            dialog.after(50, lambda: dialog.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+
+        if focus_widget is not None:
+            try:
+                focus_widget.focus_force()
+            except tk.TclError:
+                pass
 
     def derive_key(self, password, salt):
         kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
@@ -1334,34 +1365,28 @@ class SecureJournalApp:
             os.makedirs(parent, exist_ok=True)
 
     def save_json(self, data):
+        temp_path = None
         try:
             self._ensure_parent_dir()
-            if os.path.exists(self.filename):
-                if os.name == "nt" and win32security:
-                    try:
-                        user, domain, type = win32security.LookupAccountName(
-                            "", os.getlogin()
-                        )
-                        sd = win32security.GetFileSecurity(
-                            self.filename, win32security.DACL_SECURITY_INFORMATION
-                        )
-                        dacl = win32security.ACL()
-                        dacl.AddAccessAllowedAce(
-                            win32security.ACL_REVISION, con.FILE_ALL_ACCESS, user
-                        )
-                        sd.SetSecurityDescriptorDacl(1, dacl, 0)
-                        win32security.SetFileSecurity(
-                            self.filename, win32security.DACL_SECURITY_INFORMATION, sd
-                        )
-                    except Exception as perm_error:
-                        raise PermissionError(
-                            f"Failed to reset file permissions on Windows: {perm_error}"
-                        )
-                else:
-                    os.chmod(self.filename, 0o600)  # owner read/write on Unix
 
-            with gzip.open(self.filename, "wt", encoding="utf-8") as file:
+            parent_dir = os.path.dirname(self.filename) or "."
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                delete=False,
+                dir=parent_dir,
+                prefix=".journal_tmp_",
+                suffix=".gz",
+            ) as tmp_file:
+                temp_path = tmp_file.name
+
+            with gzip.open(temp_path, "wt", encoding="utf-8") as file:
                 json.dump(data, file, indent=4)
+
+            if os.name != "nt":
+                os.chmod(temp_path, 0o600)  # lock down temp file on Unix
+
+            os.replace(temp_path, self.filename)
+            temp_path = None
 
             if os.name == "nt" and win32security:
                 try:
@@ -1395,6 +1420,12 @@ class SecureJournalApp:
             )
         except Exception as e:
             raise Exception(f"Failed to save JSON data: {e}")
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
 
     def load_json(self):
         if not os.path.exists(self.filename):
