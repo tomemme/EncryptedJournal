@@ -1093,23 +1093,17 @@ class SecureJournalApp:
         return result["value"]
 
     def derive_key(self, password, salt):
-        try:
-            kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
-            if isinstance(password, memoryview):
-                password_bytes = password.tobytes()
-            elif isinstance(password, (bytes, bytearray)):
-                password_bytes = password
-            elif isinstance(password, str):
-                password_bytes = password.encode()
-            else:
-                raise TypeError("Password must be bytes-like or str")
+        kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+        if isinstance(password, memoryview):
+            password_bytes = password.tobytes()
+        elif isinstance(password, (bytes, bytearray)):
+            password_bytes = password
+        elif isinstance(password, str):
+            password_bytes = password.encode()
+        else:
+            raise TypeError("Password must be bytes-like or str")
 
-            key = kdf.derive(password_bytes)
-            self.failed_attempts = 0
-            return key
-        except Exception:
-            self.failed_attempts += 1
-            raise
+        return kdf.derive(password_bytes)
 
     def encrypt_message(self, message, password):
         salt = secrets.token_bytes(16)
@@ -1123,7 +1117,7 @@ class SecureJournalApp:
         ciphertext = aesgcm.encrypt(nonce, message.encode(), None)
         return base64.urlsafe_b64encode(salt + nonce + ciphertext).decode("utf-8")
 
-    def decrypt_message(self, encrypted_message, password):
+    def decrypt_message(self, encrypted_message, password, count_attempt=True):
         try:
             encrypted_data = base64.urlsafe_b64decode(encrypted_message)
             salt = encrypted_data[:16]
@@ -1132,10 +1126,12 @@ class SecureJournalApp:
             key = self.derive_key(password, salt)
             aesgcm = AESGCM(key)
             plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-            self.failed_attempts = 0
+            if count_attempt:
+                self.failed_attempts = 0
             return plaintext.decode("utf-8")
         except Exception:
-            self.failed_attempts += 1
+            if count_attempt:
+                self.failed_attempts += 1
             raise ValueError("Incorrect password or corrupted data.")
 
     def change_journal_password(self):
@@ -1169,6 +1165,15 @@ class SecureJournalApp:
         if not new_password:
             return
 
+        encrypted_entries = [entry.get("entry") for entry in data if entry.get("entry")]
+        if encrypted_entries:
+            try:
+                with secure_password(current_password) as old_pwd:
+                    self.decrypt_message(encrypted_entries[0], old_pwd, count_attempt=True)
+            except ValueError as e:
+                messagebox.showerror("Error", str(e))
+                return
+
         updated_data = []
         failed_entries = []
         total_encrypted_entries = 0
@@ -1184,7 +1189,9 @@ class SecureJournalApp:
                         continue
                     total_encrypted_entries += 1
                     try:
-                        plaintext = self.decrypt_message(encrypted_entry, old_pwd)
+                        plaintext = self.decrypt_message(
+                            encrypted_entry, old_pwd, count_attempt=False
+                        )
                     except Exception as error:
                         failed_entries.append(
                             {
