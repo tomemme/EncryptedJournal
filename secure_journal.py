@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, font, scrolledtext
-from tkinter.simpledialog import askstring
+from tkinter import ttk, messagebox, font
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import tomllib
 import base64
 import os
+import shutil
 import sys
 import gzip
 import json
@@ -34,6 +35,44 @@ def secure_password(password):
         gc.collect()
 
 
+OMARCHY_THEME_PATH = os.path.expanduser("~/.config/omarchy/current/theme/alacritty.toml")
+
+
+def load_omarchy_theme():
+    """
+    Loads current omarchy theme colors, falls back silently if theme not found
+    """
+    theme_toml = OMARCHY_THEME_PATH
+
+    if not os.path.exists(theme_toml):
+        return None
+
+    try:
+        with open(theme_toml, "rb") as f:
+            data = tomllib.load(f)
+
+        primary = data.get("colors", {}).get("primary", {})
+        normal = data.get("colors", {}).get("normal", {})
+        cursor = data.get("colors", {}).get("cursor", {})
+
+        bg = primary.get("background", "#1e1e2e")
+        fg = primary.get("foreground", "#cdd6f4")
+
+        # A = subtle jade accent = colors.normal.blue
+        accent = normal.get("blue", "#509475")
+
+        # Optional: get cursor color
+        cur = cursor.get("cursor", fg)
+
+        return {
+            "bg": bg,
+            "fg": fg,
+            "accent": accent,
+            "cursor": cur,
+        }
+    except Exception:
+        return None
+
 class SecureJournalApp:
     def __init__(self, root):
         self.root = root
@@ -50,40 +89,399 @@ class SecureJournalApp:
         self.max_attempts = 5
         self.dictionary = enchant.Dict("en_US")
         self.current_theme = "dark"
+        self.current_layout = None
+        self._resize_after_id = None
+        self._pending_geometry = None
         self.setup_ui()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
+        self.omarchy_theme_path = OMARCHY_THEME_PATH
+        self.omarchy_colors = load_omarchy_theme()
+        if self.omarchy_colors:
+            self.apply_omarchy_colors()
+        self.update_theme_toggle_visibility()
+        self.last_omarchy_theme_mtime = self._get_omarchy_theme_mtime()
+        self._schedule_omarchy_theme_check()
+
+    def apply_omarchy_colors(self):
+        """
+        Inject Omarchy colors into the azure theme before applying it.
+        """
+        colors = self.omarchy_colors
+        if not colors:
+            return
+
+        try:
+            # dynamically update tk palette
+            self.root.tk_setPalette(
+                background=colors["bg"],
+                foreground=colors["fg"],
+                activeBackground=colors["accent"],
+                activeForeground=colors["fg"],
+                highlightColor=colors["accent"]
+            )
+
+            # text widget background + fg
+            self.text_entry.config(
+                bg=colors["bg"],
+                fg=colors["fg"],
+                insertbackground=colors["cursor"]
+            )
+
+            # --- ttk widget styling (buttons + treeview) ---
+            style = ttk.Style()
+
+            def blend(color, target, factor):
+                """Blend a hex color toward a target color by a factor (0-1)."""
+                color = color.lstrip("#")
+                target = target.lstrip("#")
+                if len(color) != 6 or len(target) != 6:
+                    return f"#{color}"
+                try:
+                    r = int(color[0:2], 16)
+                    g = int(color[2:4], 16)
+                    b = int(color[4:6], 16)
+                    rt = int(target[0:2], 16)
+                    gt = int(target[2:4], 16)
+                    bt = int(target[4:6], 16)
+                except ValueError:
+                    return f"#{color}"
+
+                nr = min(255, max(0, int(r + (rt - r) * factor)))
+                ng = min(255, max(0, int(g + (gt - g) * factor)))
+                nb = min(255, max(0, int(b + (bt - b) * factor)))
+                return f"#{nr:02x}{ng:02x}{nb:02x}"
+
+            accent_hover = blend(colors["accent"], "ffffff", 0.18)
+            accent_pressed = blend(colors["accent"], "000000", 0.22)
+            accent_disabled = blend(colors["accent"], colors["bg"], 0.55)
+            text_disabled = blend(colors["fg"], colors["bg"], 0.65)
+
+            style.configure(
+                "Omarchy.TButton",
+                background=colors["accent"],
+                foreground=colors["fg"],
+                borderwidth=0,
+                focusthickness=1,
+                focuscolor=colors["accent"],
+                padding=(12, 6)
+            )
+            style.map(
+                "Omarchy.TButton",
+                background=[
+                    ("!disabled", colors["accent"]),
+                    ("active", accent_hover),
+                    ("pressed", accent_pressed),
+                    ("disabled", accent_disabled),
+                ],
+                foreground=[
+                    ("!disabled", colors["fg"]),
+                    ("disabled", text_disabled)
+                ]
+            )
+
+            style.configure(
+                "Omarchy.TFrame",
+                background=colors["bg"]
+            )
+            style.configure(
+                "Omarchy.TLabel",
+                background=colors["bg"],
+                foreground=colors["fg"]
+            )
+
+            # Treeview styling
+            if not hasattr(self, "_omarchy_tree_field_image"):
+                self._omarchy_tree_field_image = tk.PhotoImage(width=2, height=2)
+            self._omarchy_tree_field_image.put(colors["bg"], to=(0, 0, 2, 2))
+
+            element_name = "Omarchy.Treeview.field"
+            try:
+                if element_name not in style.element_names():
+                    style.element_create(
+                        element_name,
+                        "image",
+                        self._omarchy_tree_field_image,
+                        border=0,
+                        sticky="nswe",
+                    )
+            except tk.TclError:
+                pass
+
+            style.layout(
+                "Omarchy.Treeview",
+                [
+                    (
+                        element_name,
+                        {
+                            "sticky": "nswe",
+                            "children": [
+                                (
+                                    "Treeview.padding",
+                                    {
+                                        "sticky": "nswe",
+                                        "children": [
+                                            ("Treeview.treearea", {"sticky": "nswe"})
+                                        ],
+                                    },
+                                )
+                            ],
+                        },
+                    )
+                ],
+            )
+
+            style.configure(
+                "Omarchy.Treeview",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                fieldbackground=colors["bg"],
+                borderwidth=0,
+                rowheight=24,
+                relief="flat",
+                bordercolor=colors["bg"],
+                lightcolor=colors["bg"],
+                darkcolor=colors["bg"],
+            )
+            style.map(
+                "Omarchy.Treeview",
+                background=[
+                    ("selected", colors["accent"]),
+                    ("!selected", colors["bg"]),
+                ],
+                foreground=[
+                    ("selected", colors["bg"]),
+                    ("!selected", colors["fg"]),
+                ],
+                fieldbackground=[("!selected", colors["bg"])],
+                bordercolor=[("!selected", colors["bg"])],
+                lightcolor=[("!selected", colors["bg"])],
+                darkcolor=[("!selected", colors["bg"])],
+            )
+
+            style.configure(
+                "Treeview",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                fieldbackground=colors["bg"],
+                borderwidth=0,
+                relief="flat",
+                bordercolor=colors["bg"],
+                lightcolor=colors["bg"],
+                darkcolor=colors["bg"]
+            )
+            style.map(
+                "Treeview",
+                background=[
+                    ("selected", colors["accent"]),
+                    ("!selected", colors["bg"]),
+                ],
+                foreground=[
+                    ("selected", colors["bg"]),
+                    ("!selected", colors["fg"]),
+                ],
+                fieldbackground=[("!selected", colors["bg"])],
+                bordercolor=[("!selected", colors["bg"])],
+                lightcolor=[("!selected", colors["bg"])],
+                darkcolor=[("!selected", colors["bg"])],
+            )
+
+            # Treeview heading (column headers)
+            style.configure(
+                "Omarchy.Treeview.Heading",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                relief="flat"
+            )
+            style.map(
+                "Omarchy.Treeview.Heading",
+                background=[("active", accent_hover)],
+                foreground=[("active", colors["bg"])]
+            )
+
+            style.configure(
+                "Treeview.Heading",
+                background=colors["bg"],
+                foreground=colors["fg"],
+                relief="flat"
+            )
+            style.map(
+                "Treeview.Heading",
+                background=[("active", accent_hover)],
+                foreground=[("active", colors["bg"])]
+            )
+
+            # Scrollbar styling
+            style.configure(
+                "Vertical.TScrollbar",
+                background=colors["bg"],
+                troughcolor=colors["bg"],
+                arrowcolor=colors["fg"],
+                bordercolor=colors["bg"],
+                relief="flat"
+            )
+            style.map(
+                "Vertical.TScrollbar",
+                background=[("active", colors["accent"])]
+            )
+
+            style.configure(
+                "Horizontal.TScrollbar",
+                background=colors["bg"],
+                troughcolor=colors["bg"],
+                arrowcolor=colors["fg"],
+                bordercolor=colors["bg"],
+                relief="flat"
+            )
+            style.map(
+                "Horizontal.TScrollbar",
+                background=[("active", colors["accent"])]
+            )
+
+            # Make ttk default background match theme
+            style.configure(
+                ".",  # default ttk style root
+                background=colors["bg"],
+                foreground=colors["fg"]
+            )
+
+            # Style entry widgets (date input field)
+            try:
+                self.date_entry.config(
+                    bg=colors["bg"],
+                    fg=colors["fg"],
+                    insertbackground=colors["cursor"],
+                    highlightbackground=colors["accent"],
+                    highlightcolor=colors["accent"]
+                )
+            except:
+                pass
+
+            try:
+                self.date_label.config(bg=colors["bg"], fg=colors["fg"])
+                self.date_frame.config(bg=colors["bg"])
+                self.date_inner.config(bg=colors["bg"])
+            except tk.TclError:
+                pass
+
+            try:
+                self.days_since_label.configure(style="Omarchy.TLabel")
+            except tk.TclError:
+                pass
+
+            for frame in (
+                self.editor_container,
+                self.controls_frame,
+                self.tree_container,
+                self.button_frame,
+                self.tree_frame,
+            ):
+                try:
+                    frame.configure(style="Omarchy.TFrame")
+                except tk.TclError:
+                    pass
+
+            try:
+                self.treeview.configure(style="Omarchy.Treeview")
+                self.treeview.heading("#0", text="")
+            except tk.TclError:
+                pass
+
+            # Remove harsh frame borders (make them inherit bg)
+            for frame in (self.button_frame, self.tree_frame, self.date_frame):
+                try:
+                    frame.config(bg=colors["bg"], highlightbackground=colors["bg"])
+                except Exception:
+                    pass
+
+        except Exception as e:
+            print("Failed to apply Omarchy theme:", e)
+
+    def _get_omarchy_theme_mtime(self):
+        try:
+            return os.path.getmtime(self.omarchy_theme_path)
+        except OSError:
+            return None
+
+    def _check_for_omarchy_theme_update(self):
+        current_mtime = self._get_omarchy_theme_mtime()
+        if current_mtime != self.last_omarchy_theme_mtime:
+            colors = load_omarchy_theme()
+            self.omarchy_colors = colors
+            if colors:
+                self.apply_omarchy_colors()
+            self.update_theme_toggle_visibility()
+            self.last_omarchy_theme_mtime = current_mtime
+        self._schedule_omarchy_theme_check()
+
+    def _schedule_omarchy_theme_check(self):
+        try:
+            self.root.after(5000, self._check_for_omarchy_theme_update)
+        except Exception:
+            pass
+
+    def update_theme_toggle_visibility(self):
+        if not hasattr(self, "theme_toggle_button"):
+            return
+
+        try:
+            if getattr(self, "omarchy_colors", None):
+                self.theme_toggle_button.grid_remove()
+            else:
+                if not self.theme_toggle_button.winfo_ismapped():
+                    self.theme_toggle_button.grid()
+        except tk.TclError:
+            pass
+
 
     def setup_ui(self):
         # Allow normal window resizing + keep UI visible at small sizes
         self.root.resizable(True, True)
-        self.root.minsize(650, 520)
+        self.root.minsize(600, 460)
 
         # Frame for the date selection
-        date_frame = tk.Frame(self.root, padx=5, pady=5)
-        date_frame.pack(padx=5, pady=5)
+        self.date_frame = tk.Frame(self.root, padx=5, pady=5)
+        self.date_frame.pack(padx=5, pady=5, fill=tk.X)
+
+        # Center the date input within its own container so it stays aligned
+        self.date_inner = tk.Frame(self.date_frame)
+        self.date_inner.pack()
 
         # Entry widget for date input
-        date_label = tk.Label(date_frame, text="Enter Date (YYYY-MM-DD):")
-        date_label.grid(row=0, column=0, padx=0)
-        self.date_entry = tk.Entry(date_frame, width=12)
-        self.date_entry.grid(row=0, column=1, padx=0)
+        self.date_label = tk.Label(self.date_inner, text="Enter Date (YYYY-MM-DD):")
+        self.date_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.date_entry = tk.Entry(self.date_inner, width=12)
+        self.date_entry.pack(side=tk.LEFT)
 
-        # --- Simple vertical split: TOP = editor, BOTTOM = days+buttons+tree ---
+        # --- Responsive split container
         self.split = tk.PanedWindow(
             self.root, orient=tk.VERTICAL
-        )  # classic tk paned window = super stable
+        )  # tk PanedWindow = stable cross-platform
         self.split.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
-        # TOP pane: text editor
-        text_frame = ttk.Frame(self.split, padding=0, style="TFrame")
-        self.split.add(text_frame)  # no minsize args to avoid cross-platform quirks
+        # Editor container holds the text widget + controls so we can reposition together
+        self.editor_container = ttk.Frame(self.split, padding=5, style="Omarchy.TFrame")
+        self.editor_container.rowconfigure(0, weight=1)
+        # Reserve space for the controls that live under the editor even when
+        # the window height becomes constrained (e.g. half-screen vertical
+        # tiling). Without a minimum size the text widget would consume the
+        # entire pane and hide the action buttons until the user adjusted the
+        # sash manually.
+        self.editor_container.rowconfigure(1, weight=0, minsize=120)
+        self.editor_container.columnconfigure(0, weight=1)
+        self.editor_container.columnconfigure(1, weight=0)
+        self.split.add(self.editor_container)
 
-        self.text_entry = scrolledtext.ScrolledText(
-            text_frame, wrap=tk.WORD, width=65, height=20
+        self.text_entry = tk.Text(
+            self.editor_container, wrap=tk.WORD, width=65, height=20
         )
-        # key: let the editor grow/shrink with the window
-        self.text_entry.pack(fill=tk.BOTH, expand=True)
+        self.text_entry.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+
+        text_scrollbar = ttk.Scrollbar(
+            self.editor_container, orient=tk.VERTICAL, command=self.text_entry.yview
+        )
+        text_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.text_entry.configure(yscrollcommand=text_scrollbar.set)
 
         text_font = font.Font(family="Verdana", size=12)
         self.text_entry.configure(font=text_font)
@@ -96,58 +494,156 @@ class SecureJournalApp:
         self.text_entry.bind("<Button-3>", self.show_suggestions)  # Linux/Windows
         self.text_entry.bind("<Button-2>", self.show_suggestions)  # macOS fallback
 
-        # BOTTOM pane: days label + buttons + tree (tree expands)
-        bottom = ttk.Frame(self.split)
-        self.split.add(bottom)
+        # Container for status + action buttons (lives under the editor in all layouts)
+        self.controls_frame = ttk.Frame(self.editor_container, style="Omarchy.TFrame")
+        self.controls_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.controls_frame.columnconfigure(0, weight=1)
 
-        self.days_since_label = ttk.Label(bottom, text=self.days_since_last_entry())
-        self.days_since_label.pack(pady=5)
-
-        button_frame = tk.Frame(bottom)
-        button_frame.pack(padx=10, pady=10)
-
-        ttk.Button(
-            button_frame, text="Save Entry", command=self.save_journal_entry
-        ).grid(row=1, column=0, padx=5)
-        ttk.Button(
-            button_frame, text="Load Entry", command=self.load_journal_entry
-        ).grid(row=1, column=1, padx=5)
-        ttk.Button(
-            button_frame, text="Delete Entry", command=self.delete_journal_entry
-        ).grid(row=1, column=2, padx=5)
-        ttk.Button(
-            button_frame, text="Clear Entry", command=self.clear_journal_entry
-        ).grid(row=1, column=3, padx=5)
-        ttk.Button(button_frame, text="light/dark", command=self.toggle_theme).grid(
-            row=1, column=5, padx=5
+        self.days_since_label = ttk.Label(
+            self.controls_frame, text=self.days_since_last_entry(), style="Omarchy.TLabel"
         )
+        self.days_since_label.pack(pady=(0, 5))
 
-        treeview_frame = ttk.Frame(bottom)
-        treeview_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+        self.button_frame = ttk.Frame(self.controls_frame, style="Omarchy.TFrame")
+        self.button_frame.pack(padx=10, pady=5)
+        for i in range(6):
+            self.button_frame.columnconfigure(i, weight=1)
 
-        scrollbar = ttk.Scrollbar(treeview_frame, orient=tk.VERTICAL)
+        action_button_padding = (6, 4)
+
+        ttk.Button(
+            self.button_frame,
+            text="Save",
+            command=self.save_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
+        ).grid(row=1, column=0, padx=5)
+
+        ttk.Button(
+            self.button_frame,
+            text="Load",
+            command=self.load_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
+        ).grid(row=1, column=1, padx=5)
+
+        ttk.Button(
+            self.button_frame,
+            text="Delete",
+            command=self.delete_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
+        ).grid(row=1, column=2, padx=5)
+
+        ttk.Button(
+            self.button_frame,
+            text="Clear",
+            command=self.clear_journal_entry,
+            style="Omarchy.TButton",
+            padding=action_button_padding,
+        ).grid(row=1, column=3, padx=5)
+
+        ttk.Button(
+            self.button_frame,
+            text="Change Password",
+            command=self.change_journal_password,
+            style="Omarchy.TButton",
+        ).grid(row=1, column=4, padx=5)
+
+        self.theme_toggle_button = ttk.Button(
+            self.button_frame, text="light/dark", command=self.toggle_theme, style="Omarchy.TButton"
+        )
+        self.theme_toggle_button.grid(row=1, column=5, padx=5)
+
+        # Separate container for the treeview so we can move it below or beside the editor
+        self.tree_container = ttk.Frame(self.split, style="Omarchy.TFrame")
+        self.tree_container.rowconfigure(0, weight=1)
+        self.tree_container.columnconfigure(0, weight=1)
+        self.split.add(self.tree_container)
+
+        self.tree_frame = ttk.Frame(self.tree_container, style="Omarchy.TFrame")
+        self.tree_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(self.tree_frame, orient=tk.VERTICAL)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.treeview = ttk.Treeview(treeview_frame, yscrollcommand=scrollbar.set)
+        self.treeview = ttk.Treeview(self.tree_frame, yscrollcommand=scrollbar.set)
         self.treeview.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
         self.treeview.bind("<<TreeviewSelect>>", self.on_treeview_select)
         scrollbar.config(command=self.treeview.yview)
 
-        # Initial sash position (give the editor more space to start)
-        def _init_sash():
-            try:
-                self.root.update_idletasks()
-                h = self.split.winfo_height() or self.root.winfo_height()
-                self.split.sash_place(
-                    0, 0, max(220, int(h * 0.55))
-                )  # y pos of the sash
-            except Exception:
-                pass
-
-        self.root.after(100, _init_sash)
+        self.root.bind("<Configure>", self.on_root_resize)
+        self.root.after(200, self._initialize_layout)
 
         # Initial update of treeview
         self.update_treeview()
+
+    def _initialize_layout(self):
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        if width <= 1 or height <= 1:
+            self.root.after(100, self._initialize_layout)
+            return
+        self.update_layout(width, height)
+
+    def on_root_resize(self, event):
+        if event.widget is not self.root:
+            return
+        if event.width <= 0 or event.height <= 0:
+            return
+        self._pending_geometry = (event.width, event.height)
+        if self._resize_after_id is not None:
+            self.root.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.root.after(120, self._apply_pending_layout)
+
+    def _apply_pending_layout(self):
+        self._resize_after_id = None
+        if not self._pending_geometry:
+            return
+        width, height = self._pending_geometry
+        self.update_layout(width, height)
+
+    def update_layout(self, width, height):
+        if width <= 1 or height <= 1:
+            return
+        desired_layout = "horizontal" if width >= height else "vertical"
+        if desired_layout == self.current_layout:
+            return
+
+        self.current_layout = desired_layout
+        orient = tk.HORIZONTAL if desired_layout == "horizontal" else tk.VERTICAL
+        self.split.configure(orient=orient)
+
+        # ensure panes are re-added in the proper order
+        try:
+            self.split.forget(self.editor_container)
+        except tk.TclError:
+            pass
+        try:
+            self.split.forget(self.tree_container)
+        except tk.TclError:
+            pass
+
+        self.split.add(self.editor_container)
+        self.split.add(self.tree_container)
+
+        self.root.after(50, self._position_sash)
+
+    def _position_sash(self):
+        if not self.current_layout:
+            return
+        try:
+            self.root.update_idletasks()
+            if self.current_layout == "vertical":
+                total = self.split.winfo_height() or self.root.winfo_height()
+                pos = max(220, int(total * 0.58))
+                self.split.sash_place(0, 0, pos)
+            else:
+                total = self.split.winfo_width() or self.root.winfo_width()
+                pos = max(360, int(total * 0.62))
+                self.split.sash_place(0, pos, 0)
+        except Exception:
+            pass
 
     def set_app_icon(self):
         try:
@@ -305,12 +801,153 @@ class SecureJournalApp:
             self.root.destroy()
             return None
 
-        password = askstring(
-            "Password Required", "Enter your journal password:", show="*"
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Password Required")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        # Match the journal tile aesthetics when possible
+        try:
+            dialog.configure(bg=self.text_entry.cget("bg"))
+        except tk.TclError:
+            pass
+
+        prompt = ttk.Label(
+            dialog, text="Enter your journal password:", style="Omarchy.TLabel"
         )
+        prompt.pack(padx=20, pady=(20, 10))
+
+        password_var = tk.StringVar()
+        entry = ttk.Entry(dialog, textvariable=password_var, show="*")
+        entry.pack(padx=20, pady=(0, 15))
+        entry.focus_set()
+
+        button_row = ttk.Frame(dialog, style="Omarchy.TFrame")
+        button_row.pack(padx=20, pady=(0, 20))
+
+        result = {"value": None}
+
+        def submit(event=None):
+            result["value"] = password_var.get()
+            dialog.destroy()
+
+        def cancel(event=None):
+            result["value"] = None
+            dialog.destroy()
+
+        ttk.Button(
+            button_row, text="OK", command=submit, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            button_row, text="Cancel", command=cancel, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT)
+
+        dialog.bind("<Return>", submit)
+        dialog.bind("<Escape>", cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+        # Center the dialog over the journal tile (editor container)
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+
+        target = self.editor_container
+        target_x = target.winfo_rootx()
+        target_y = target.winfo_rooty()
+        target_width = target.winfo_width()
+        target_height = target.winfo_height()
+
+        dialog_width = dialog.winfo_width()
+        dialog_height = dialog.winfo_height()
+
+        pos_x = target_x + (target_width - dialog_width) // 2
+        pos_y = target_y + (target_height - dialog_height) // 2
+        dialog.geometry(f"+{pos_x}+{pos_y}")
+
+        dialog.wait_window()
+
+        password = result["value"]
         if password is None:
             raise Exception("Password input canceled by the user.")
         return password
+
+    def prompt_for_new_password(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Set New Password")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        try:
+            dialog.configure(bg=self.text_entry.cget("bg"))
+        except tk.TclError:
+            pass
+
+        prompt = ttk.Label(
+            dialog, text="Enter and confirm the new password:", style="Omarchy.TLabel"
+        )
+        prompt.pack(padx=20, pady=(20, 10))
+
+        new_password_var = tk.StringVar()
+        confirm_password_var = tk.StringVar()
+
+        new_entry = ttk.Entry(dialog, textvariable=new_password_var, show="*")
+        new_entry.pack(padx=20, pady=(0, 10))
+        new_entry.focus_set()
+
+        confirm_entry = ttk.Entry(dialog, textvariable=confirm_password_var, show="*")
+        confirm_entry.pack(padx=20, pady=(0, 15))
+
+        button_row = ttk.Frame(dialog, style="Omarchy.TFrame")
+        button_row.pack(padx=20, pady=(0, 20))
+
+        result = {"value": None}
+
+        def submit(event=None):
+            new_password = new_password_var.get()
+            confirm_password = confirm_password_var.get()
+            if not new_password:
+                messagebox.showerror(
+                    "Error", "New password cannot be empty.", parent=dialog
+                )
+                return
+            if new_password != confirm_password:
+                messagebox.showerror(
+                    "Error", "Passwords do not match.", parent=dialog
+                )
+                return
+            result["value"] = new_password
+            dialog.destroy()
+
+        def cancel(event=None):
+            result["value"] = None
+            dialog.destroy()
+
+        ttk.Button(
+            button_row, text="OK", command=submit, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(
+            button_row, text="Cancel", command=cancel, style="Omarchy.TButton"
+        ).pack(side=tk.LEFT)
+
+        dialog.bind("<Return>", submit)
+        dialog.bind("<Escape>", cancel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+        root_x = self.root.winfo_rootx()
+        root_y = self.root.winfo_rooty()
+        root_width = self.root.winfo_width()
+        root_height = self.root.winfo_height()
+        dialog_width = dialog.winfo_width()
+        dialog_height = dialog.winfo_height()
+        pos_x = root_x + (root_width - dialog_width) // 2
+        pos_y = root_y + (root_height - dialog_height) // 2
+        dialog.geometry(f"+{pos_x}+{pos_y}")
+
+        dialog.wait_window()
+        return result["value"]
 
     def derive_key(self, password, salt):
         try:
@@ -348,6 +985,188 @@ class SecureJournalApp:
         except Exception:
             self.failed_attempts += 1
             raise ValueError("Incorrect password or corrupted data.")
+
+    def change_journal_password(self):
+        self.last_action_time = datetime.now()
+        backup_path = None
+        if os.path.exists(self.filename):
+            try:
+                backup_path = self.create_journal_backup()
+            except Exception as backup_error:
+                messagebox.showwarning(
+                    "Backup Failed",
+                    "The journal could not be backed up before attempting the password change. "
+                    "The process will continue without a backup.\n\n"
+                    f"Details: {backup_error}",
+                )
+
+        data = self.load_json()
+
+        if not data:
+            messagebox.showinfo(
+                "No Entries",
+                "There are no journal entries to re-encrypt. Add an entry first before changing the password.",
+            )
+            return
+
+        try:
+            current_password = self.prompt_for_password()
+        except Exception:
+            return
+
+        new_password = self.prompt_for_new_password()
+        if not new_password:
+            return
+
+        updated_data = []
+        failed_entries = []
+        total_encrypted_entries = 0
+        successful_updates = 0
+        failure_threshold = 0.9
+
+        with secure_password(current_password) as old_pwd:
+            with secure_password(new_password) as new_pwd:
+                for entry in data:
+                    encrypted_entry = entry.get("entry")
+                    if not encrypted_entry:
+                        updated_data.append(entry)
+                        continue
+                    total_encrypted_entries += 1
+                    try:
+                        plaintext = self.decrypt_message(encrypted_entry, old_pwd)
+                    except Exception as error:
+                        failed_entries.append(
+                            {
+                                "date": entry.get("date")
+                                or entry.get("timestamp")
+                                or entry.get("created_at")
+                                or "Unknown entry",
+                                "reason": str(error),
+                            }
+                        )
+                        updated_data.append(entry)
+                        continue
+
+                    encrypted_new = self.encrypt_message(plaintext, new_pwd)
+                    if encrypted_new is None:
+                        failed_entries.append(
+                            {
+                                "date": entry.get("date")
+                                or entry.get("timestamp")
+                                or entry.get("created_at")
+                                or "Unknown entry",
+                                "reason": "Failed to encrypt entry with the new password.",
+                            }
+                        )
+                        updated_data.append(entry)
+                        continue
+
+                    updated_entry = dict(entry)
+                    updated_entry["entry"] = encrypted_new
+                    updated_data.append(updated_entry)
+                    successful_updates += 1
+
+        success_ratio = (
+            successful_updates / total_encrypted_entries
+            if total_encrypted_entries
+            else 1.0
+        )
+
+        log_path = None
+        if failed_entries:
+            try:
+                log_path = self.log_password_rotation_failures(failed_entries)
+            except Exception as log_error:
+                messagebox.showwarning(
+                    "Logging Failed",
+                    "Unable to record failed entry details for the password change.\n\n"
+                    f"Details: {log_error}",
+                )
+
+        if total_encrypted_entries and success_ratio < failure_threshold:
+            details = ""
+            if failed_entries:
+                failed_dates = ", ".join(
+                    sorted({failure["date"] for failure in failed_entries})
+                )
+                details = (
+                    "\n\nEntries that could not be re-encrypted: "
+                    f"{failed_dates}."
+                )
+            log_note = (
+                f"\n\nDetailed information has been saved to: {log_path}"
+                if log_path
+                else ""
+            )
+            backup_note = (
+                f"\n\nA backup of your journal is stored at: {backup_path}"
+                if backup_path
+                else ""
+            )
+            messagebox.showerror(
+                "Password Change Incomplete",
+                "Fewer than 90% of your journal entries could be updated with the new password. "
+                "Your journal has not been modified." + details + log_note + backup_note,
+            )
+            return
+
+        try:
+            self.save_json(updated_data)
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Failed to save the re-encrypted journal entries: {e}"
+            )
+            return
+
+        if failed_entries:
+            failed_details = "\n".join(
+                f"• {failure['date']}: {failure['reason']}" for failure in failed_entries
+            )
+            log_message = (
+                f"\nA record of the affected entries has been written to: {log_path}"
+                if log_path
+                else ""
+            )
+            backup_note = (
+                f"\nYour pre-change journal is backed up at: {backup_path}"
+                if backup_path
+                else ""
+            )
+            messagebox.showwarning(
+                "Password Change Completed with Warnings",
+                "Most entries were updated with the new password, "
+                "but some entries could not be re-encrypted.\n\n"
+                f"{failed_details}{log_message}{backup_note}",
+            )
+        else:
+            messagebox.showinfo(
+                "Success", "All journal entries have been re-encrypted with the new password."
+            )
+        self.hashed_password = None
+
+    def create_journal_backup(self):
+        self._ensure_parent_dir()
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base_name = os.path.basename(self.filename)
+        backup_name = f"{base_name}.bak-{timestamp}"
+        backup_path = os.path.join(os.path.dirname(self.filename), backup_name)
+        shutil.copy2(self.filename, backup_path)
+        return backup_path
+
+    def log_password_rotation_failures(self, failed_entries):
+        if not failed_entries:
+            return None
+        log_path = os.path.join(
+            os.path.dirname(self.filename), "password_rotation_failures.log"
+        )
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            f"[{timestamp}] {failure['date']} - {failure['reason']}"
+            for failure in failed_entries
+        ]
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write("\n".join(lines) + "\n")
+        return log_path
 
     def _ensure_parent_dir(self):
         parent = os.path.dirname(self.filename)
@@ -418,9 +1237,32 @@ class SecureJournalApp:
             raise Exception(f"Failed to save JSON data: {e}")
 
     def load_json(self):
-        if os.path.exists(self.filename):
+        if not os.path.exists(self.filename):
+            return []
+
+        try:
             with gzip.open(self.filename, "rt", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showwarning(
+                "Warning",
+                "The journal file appears to be corrupted or unreadable. "
+                "It will be ignored until it is replaced with a valid backup.",
+            )
+            print(f"Failed to read journal file '{self.filename}': {e}")
+            return []
+
+        if isinstance(data, list):
+            return data
+
+        messagebox.showwarning(
+            "Warning",
+            "The journal file contains unexpected data and will be ignored.",
+        )
+        print(
+            "Unexpected journal file contents. Expected a list of entries, "
+            f"got {type(data).__name__}."
+        )
         return []
 
     def save_journal_entry(self):
