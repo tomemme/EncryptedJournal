@@ -105,10 +105,10 @@ class SecureJournalApp:
         self.current_layout = None
         self._resize_after_id = None
         self._pending_geometry = None
-        self.base_text_size = 13
-        self.base_tree_font_size = 12
-        self.base_heading_font_size = 12
-        self.base_tree_row_height = 26
+        self.base_text_size = 12
+        self.base_tree_font_size = 11
+        self.base_heading_font_size = 11
+        self.base_tree_row_height = 24
         self.tree_row_height = self.base_tree_row_height
         self.text_font = font.Font(family="Verdana", size=self.base_text_size)
         self.tree_font = font.Font(family="Verdana", size=self.base_tree_font_size)
@@ -1580,20 +1580,55 @@ class SecureJournalApp:
             for date in dates:
                 self.treeview.insert(parent, "end", text=date)
 
+def _clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
+
+
+def _resolve_startup_scaling(root):
+    # Optional override for troubleshooting and per-device tuning.
+    override = os.environ.get("ENCRYPTED_JOURNAL_UI_SCALE")
+    if override:
+        try:
+            return _clamp(float(override), 0.9, 2.2)
+        except ValueError:
+            pass
+
+    dpi_scale = 1.0
+    try:
+        dpi = float(root.winfo_fpixels("1i"))
+        if dpi > 0:
+            dpi_scale = dpi / 96.0
+    except Exception:
+        dpi_scale = 1.0
+
+    try:
+        screen_width = max(1, int(root.winfo_screenwidth()))
+        screen_height = max(1, int(root.winfo_screenheight()))
+        resolution_ratio = (screen_width * screen_height) / float(1920 * 1080)
+        resolution_scale = resolution_ratio**0.08
+    except Exception:
+        resolution_scale = 1.0
+
+    return _clamp(dpi_scale * resolution_scale, 0.95, 1.45)
+
+
+def _set_startup_geometry(root):
+    try:
+        screen_width = max(1, int(root.winfo_screenwidth()))
+        screen_height = max(1, int(root.winfo_screenheight()))
+        width = _clamp(int(screen_width * 0.72), 900, 1360)
+        height = _clamp(int(screen_height * 0.78), 620, 940)
+        pos_x = max(0, (screen_width - width) // 2)
+        pos_y = max(20, (screen_height - height) // 3)
+        root.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+    except Exception:
+        root.geometry("1100x760+120+80")
+
+
 if __name__ == "__main__":
-    # hyperland friendly
     root = tk.Tk(className="JournalApp")
     root.title("Secure Encrypted Journal")
-    root.geometry("1200x800+120+80")
-    root.minsize(900, 600)
-
-    # DPI scaling
-    root.tk.call("tk", "scaling", 2.20)
-
-    # nicer
-    font.nametofont("TkDefaultFont").configure(size=11)
-    font.nametofont("TkTextFont").configure(size=12)
-    font.nametofont("TkFixedFont").configure(size=12)
-
+    _set_startup_geometry(root)
+    root.tk.call("tk", "scaling", _resolve_startup_scaling(root))
     app = SecureJournalApp(root)
     root.mainloop()
