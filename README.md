@@ -23,7 +23,7 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
 1. Clone the Repository
     cd encrypted-journal
 
-![GUI](https://github.com/tomemme/EncryptedJournal/blob/main/duoTheme.PNG)
+![GUI](https://github.com/tomemme/EncryptedJournal/blob/main/omarchyTheme.PNG)
 
 # Example JSON File Structure
 [
@@ -92,3 +92,4 @@ These steps create a temporary review branch that teammates can pull down to try
 
 # License
 This project is licensed under the MIT License. See the LICENSE file for more details.
+
