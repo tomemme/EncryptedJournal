@@ -10,6 +10,7 @@ pkgbase = encrypted-journal-git
 	depends = tk
 	depends = python-cryptography
 	depends = python-pyenchant
+	optdepends = python-keyring: optional system keyring integration
 	provides = encrypted-journal
 	conflicts = encrypted-journal
 	source = git+https://github.com/tomemme/EncryptedJournal.git

@@ -38,6 +38,18 @@ Run the local smoke test to verify core journal flows (save, load, delete, and p
 python scripts/smoke_test.py
 ```
 
+# Storage + Keyring Options
+Default journal location now follows XDG conventions:
+- `~/.local/share/encrypted-journal/journal.json.gz` (or `$XDG_DATA_HOME/encrypted-journal/journal.json.gz`)
+
+Compatibility behavior:
+- If a legacy `journal.json.gz` exists in the app directory, it is still used automatically.
+
+Environment overrides:
+- `ENCRYPTED_JOURNAL_FILE=/custom/path/journal.json.gz` to force a specific file location.
+- `ENCRYPTED_JOURNAL_USE_KEYRING=1` to enable optional system keyring integration for remembered passwords.
+- `ENCRYPTED_JOURNAL_KEYRING_USER=<name>` to customize the keyring account key.
+
 # Arch / Omarchy Packaging
 This repo includes Arch packaging files at `packaging/arch/` so the app can be published to AUR and discovered from Omarchy package search tools.
 

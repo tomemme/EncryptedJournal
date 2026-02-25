@@ -1,16 +1,17 @@
 # Maintainer: Tom <tomemme@outlook.com>
 pkgname=encrypted-journal-git
-pkgver=0.r0.g0000000
+pkgver=0.r84.g794b317
 pkgrel=1
 pkgdesc="Encrypted desktop journal app (Tkinter + AES-GCM)"
 arch=('any')
 url='https://github.com/tomemme/EncryptedJournal'
 license=('MIT')
 depends=('python' 'tk' 'python-cryptography' 'python-pyenchant')
+optdepends=('python-keyring: optional system keyring integration')
 makedepends=('git')
 provides=('encrypted-journal')
 conflicts=('encrypted-journal')
-source=('git+https://github.com/tomemme/EncryptedJournal.git')
+source=('git+https://github.com/tomemme/EncryptedJournal.git#branch=omarchy-version')
 sha256sums=('SKIP')
 
 pkgver() {
