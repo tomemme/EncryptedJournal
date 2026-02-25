@@ -2,3 +2,10 @@ journal.json.gz
 Encrypted Journal Overview.mp4
 run_journal.sh
 .venv/
+
+# Arch packaging build artifacts
+packaging/arch/EncryptedJournal/
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.pkg.tar.*
+packaging/arch/*.pkg.tar.*.sig

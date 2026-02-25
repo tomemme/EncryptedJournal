@@ -1,6 +1,6 @@
 pkgbase = encrypted-journal-git
 	pkgdesc = Encrypted desktop journal app (Tkinter + AES-GCM)
-	pkgver = 0.r0.g0000000
+	pkgver = 0.r85.gc49a207
 	pkgrel = 1
 	url = https://github.com/tomemme/EncryptedJournal
 	arch = any
@@ -13,7 +13,7 @@ pkgbase = encrypted-journal-git
 	optdepends = python-keyring: optional system keyring integration
 	provides = encrypted-journal
 	conflicts = encrypted-journal
-	source = git+https://github.com/tomemme/EncryptedJournal.git
+	source = git+https://github.com/tomemme/EncryptedJournal.git#branch=omarchy-version
 	sha256sums = SKIP
 
 pkgname = encrypted-journal-git
