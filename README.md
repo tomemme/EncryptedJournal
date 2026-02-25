@@ -23,7 +23,7 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
 1. Clone the Repository
     cd encrypted-journal
 
-![GUI]([https://github.com/tomemme/EncryptedJournal/blob/omarchy-version/omarchyTheme.png])
+![GUI](omarchyTheme.png)
 
 # Example JSON File Structure
 [
