@@ -13,10 +13,11 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
 - **Clear Entry**: Reset the text and date fields with a single click.
 
 # Requirements
-- Python 3.6+
+- Python 3.11+
 - Dependencies:
   - `cryptography` (for encryption/decryption)
   - `pyenchant` (for spell checking)
+  - `keyring` (optional, for saved passwords via system keyring)
   - `pywin32` (optional, for Windows file permissions)
 
 # Installation

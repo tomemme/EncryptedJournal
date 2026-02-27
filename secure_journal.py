@@ -1722,6 +1722,40 @@ class SecureJournalApp:
         if parent and not os.path.exists(parent):
             os.makedirs(parent, exist_ok=True)
 
+    def _is_valid_date_string(self, value):
+        if not isinstance(value, str):
+            return False
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
+
+    def _sanitize_journal_data(self, data):
+        sanitized = []
+        skipped = 0
+        for item in data:
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+
+            date_value = item.get("date")
+            entry_value = item.get("entry")
+            if not self._is_valid_date_string(date_value) or not isinstance(
+                entry_value, str
+            ):
+                skipped += 1
+                continue
+
+            sanitized.append(item)
+
+        if skipped:
+            print(
+                f"Skipped {skipped} invalid journal record(s) while loading "
+                f"'{self.filename}'."
+            )
+        return sanitized
+ 
     def save_json(self, data):
         temp_path = None
         try:
@@ -1802,7 +1836,7 @@ class SecureJournalApp:
             return []
 
         if isinstance(data, list):
-            return data
+            return self._sanitize_journal_data(data)
 
         messagebox.showwarning(
             "Warning",
