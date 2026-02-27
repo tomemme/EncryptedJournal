@@ -345,10 +345,22 @@ class SecureJournalApp:
             return
 
         self.root.update_idletasks()
-        width = max(640, self.root.winfo_width())
-        height = max(460, self.root.winfo_height())
-        x = self.root.winfo_rootx()
-        y = self.root.winfo_rooty()
+        root_width = max(1, self.root.winfo_width())
+        root_height = max(1, self.root.winfo_height())
+
+        # Keep the overlay ~10% smaller than the parent journal window.
+        width = max(320, min(root_width - 20, int(root_width * 0.9)))
+        height = max(260, min(root_height - 20, int(root_height * 0.9)))
+
+        root_x = self.root.winfo_rootx()
+        root_y = self.root.winfo_rooty()
+        x = root_x + max(0, (root_width - width) // 2)
+        y = root_y + max(0, (root_height - height) // 2)
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = max(0, min(x, max(0, screen_w - width)))
+        y = max(0, min(y, max(0, screen_h - height)))
         self.help_overlay.geometry(f"{width}x{height}+{x}+{y}")
 
     def _sync_help_overlay_geometry(self):
@@ -356,7 +368,7 @@ class SecureJournalApp:
             return
         self._position_help_overlay()
         if self.help_content_label and self.help_content_label.winfo_exists():
-            wrap = max(520, self.help_overlay.winfo_width() - 120)
+            wrap = max(220, self.help_overlay.winfo_width() - 80)
             self.help_content_label.configure(wraplength=wrap)
         self.help_overlay.after(140, self._sync_help_overlay_geometry)
 
@@ -419,8 +431,8 @@ class SecureJournalApp:
             "5. To remove an entry, select a date and click Delete.\n\n"
             "6. Use Change Password to re-encrypt all entries with a new password.\n\n"
             "Tips:\n"
-            "- Keep your password in a safe place. Lost passwords cannot be recovered.\n"
-            "- Backups are created automatically when changing passwords."
+            "- Keep your password in a safe place (Your Mind). Lost passwords cannot be recovered.\n"
+            "- Backups are created automatically if you rotate your passwords. (backup you /local/share)"
         )
 
         self.help_content_label = tk.Label(
@@ -429,7 +441,7 @@ class SecureJournalApp:
             justify=tk.LEFT,
             anchor="nw",
             font=("Verdana", 11),
-            wraplength=max(600, self.root.winfo_width() - 120),
+            wraplength=max(220, int(self.root.winfo_width() * 0.9) - 80),
         )
         self.help_content_label.pack(fill=tk.BOTH, expand=True)
 
