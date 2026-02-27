@@ -24,6 +24,8 @@ import string
 import secrets
 import gc
 import tempfile
+import logging
+from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
 
 # Windows-specific imports for file permissions
@@ -110,6 +112,7 @@ class SecureJournalApp:
         self.keyring_enabled = self._env_bool("ENCRYPTED_JOURNAL_USE_KEYRING", False)
         self.keyring_available = keyring is not None and self.keyring_enabled
         self.filename = self._resolve_journal_path()
+        self.logger = self._configure_logger()
         self.is_modified = False
         self.entry_loaded = False
         self.failed_attempts = 0
@@ -151,6 +154,44 @@ class SecureJournalApp:
         self.last_omarchy_theme_mtime = self._get_omarchy_theme_mtime()
         self._schedule_omarchy_theme_check()
 
+    def _resolve_log_path(self):
+        custom_path = os.environ.get("ENCRYPTED_JOURNAL_LOG_FILE")
+        if custom_path:
+            return os.path.abspath(os.path.expanduser(custom_path))
+        log_dir = os.path.dirname(self.filename) or "."
+        return os.path.join(log_dir, "encrypted-journal.log")
+
+    def _configure_logger(self):
+        logger = logging.getLogger("encrypted_journal")
+        logger.propagate = False
+        level_name = os.environ.get("ENCRYPTED_JOURNAL_LOG_LEVEL", "INFO").upper()
+        level = getattr(logging, level_name, logging.INFO)
+        logger.setLevel(level)
+
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+
+        formatter = logging.Formatter(
+            "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+        )
+        log_path = self._resolve_log_path()
+        try:
+            log_dir = os.path.dirname(log_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+            handler = RotatingFileHandler(
+                log_path, maxBytes=512 * 1024, backupCount=5, encoding="utf-8"
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.info("Logger initialized at %s", log_path)
+        except Exception:
+            fallback = logging.StreamHandler()
+            fallback.setFormatter(formatter)
+            logger.addHandler(fallback)
+            logger.exception("Failed to initialize file logger at %s", log_path)
+        return logger
+
     def _env_bool(self, name, default=False):
         value = os.environ.get(name)
         if value is None:
@@ -188,7 +229,7 @@ class SecureJournalApp:
         try:
             return keyring.get_password(self.keyring_service, self.keyring_username)
         except Exception as error:
-            print(f"Keyring read failed: {error}")
+            self.logger.warning("Keyring read failed: %s", error)
             return None
 
     def _keyring_set_password(self, password):
@@ -197,7 +238,7 @@ class SecureJournalApp:
         try:
             keyring.set_password(self.keyring_service, self.keyring_username, password)
         except Exception as error:
-            print(f"Keyring write failed: {error}")
+            self.logger.warning("Keyring write failed: %s", error)
 
     def _keyring_clear_password(self):
         if not self.keyring_available:
@@ -209,7 +250,7 @@ class SecureJournalApp:
 
     def _init_spellchecker(self):
         if enchant is None:
-            print("Spellcheck disabled: pyenchant is not installed.")
+            self.logger.info("Spellcheck disabled: pyenchant is not installed.")
             return
         try:
             self.dictionary = enchant.Dict("en_US")
@@ -217,7 +258,7 @@ class SecureJournalApp:
         except Exception as error:
             self.dictionary = None
             self.spellcheck_enabled = False
-            print(f"Spellcheck disabled: {error}")
+            self.logger.warning("Spellcheck disabled: %s", error)
 
     def _get_help_palette(self):
         if getattr(self, "omarchy_colors", None):
@@ -727,7 +768,7 @@ class SecureJournalApp:
             self._style_help_overlay()
 
         except Exception as e:
-            print("Failed to apply Omarchy theme:", e)
+            self.logger.exception("Failed to apply Omarchy theme: %s", e)
         finally:
             # Re-apply responsive fonts in case the theme reset them
             self.apply_responsive_typography()
@@ -1121,7 +1162,8 @@ class SecureJournalApp:
                     self.root.iconphoto(True, tk.PhotoImage(file=png_path))
         except Exception as e:
             # Don't crash if the icon can't be loaded; just log it.
-            print(f"Icon not applied: {e}")
+            if hasattr(self, "logger"):
+                self.logger.warning("Icon not applied: %s", e)
 
     def days_since_last_entry(self):
         data = self.load_json()
@@ -1166,7 +1208,7 @@ class SecureJournalApp:
             self._apply_help_button_style()
             self._style_help_overlay()
         except tk.TclError as e:
-            print(f"Error applying theme: {e}")
+            self.logger.exception("Error applying theme: %s", e)
             messagebox.showerror(
                 "Error",
                 "Unable to apply theme. Ensure that the theme is loaded correctly.",
@@ -1177,7 +1219,7 @@ class SecureJournalApp:
             azure_tcl_path = self.resource_path("azure.tcl")
             self.root.tk.call("source", azure_tcl_path)
         except tk.TclError as e:
-            print(f"Error loading theme file: {e}")
+            self.logger.exception("Error loading theme file: %s", e)
             messagebox.showerror(
                 "Error",
                 "Unable to load theme file. Make sure the azure.tcl file is in the correct directory.",
@@ -1209,7 +1251,7 @@ class SecureJournalApp:
                     self.text_entry.tag_add("misspelled", start_idx, end_idx)
         except Exception as e:
             self.spellcheck_enabled = False
-            print(f"Spellcheck disabled due to runtime error: {e}")
+            self.logger.exception("Spellcheck disabled due to runtime error: %s", e)
 
     def get_words_positions(self, text):
         words_positions = []
@@ -1762,7 +1804,7 @@ class SecureJournalApp:
             sanitized.append(item)
 
         if skipped:
-            print(
+            self.logger.warning(
                 f"Skipped {skipped} invalid journal record(s) while loading "
                 f"'{self.filename}'."
             )
@@ -1844,7 +1886,7 @@ class SecureJournalApp:
                 "The journal file appears to be corrupted or unreadable. "
                 "It will be ignored until it is replaced with a valid backup.",
             )
-            print(f"Failed to read journal file '{self.filename}': {e}")
+            self.logger.warning("Failed to read journal file '%s': %s", self.filename, e)
             return []
 
         if isinstance(data, list):
@@ -1854,9 +1896,9 @@ class SecureJournalApp:
             "Warning",
             "The journal file contains unexpected data and will be ignored.",
         )
-        print(
-            "Unexpected journal file contents. Expected a list of entries, "
-            f"got {type(data).__name__}."
+        self.logger.warning(
+            "Unexpected journal file contents. Expected a list of entries, got %s.",
+            type(data).__name__,
         )
         return []
 

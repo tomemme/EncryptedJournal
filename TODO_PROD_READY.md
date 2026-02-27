@@ -16,9 +16,9 @@ Legend:
 - [ ] Add a restore-from-backup flow in the UI.
 
 ## 3) Logging And Error Handling
-- [ ] Replace `print(...)` with structured logging.
-- [ ] Write logs to rotating files.
-- [ ] Keep popup messages concise and log detailed traces separately.
+- [x] Replace `print(...)` with structured logging.
+- [x] Write logs to rotating files.
+- [x] Keep popup messages concise and log detailed traces separately.
 
 ## 4) Strict Data Validation
 - [ ] Validate journal schema on load (`date`, `entry`).
@@ -46,9 +46,9 @@ Legend:
 - [ ] Link help overlay to backup/restore guidance.
 
 ## 9) Security Documentation
-- [ ] Add `SECURITY.md` with threat model and limitations.
-- [ ] Document recovery constraints (lost password is unrecoverable).
-- [ ] Add vulnerability reporting instructions.
+- [x] Add `SECURITY.md` with threat model and limitations.
+- [x] Document recovery constraints (lost password is unrecoverable).
+- [x] Add vulnerability reporting instructions.
 
 ## 10) Performance + Scale
 - [ ] Test with large journal datasets.
