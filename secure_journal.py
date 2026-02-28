@@ -143,6 +143,7 @@ class SecureJournalApp:
         self.last_typography_scale = None
 
         self.setup_ui()
+        self._bind_shortcuts()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
         self.omarchy_theme_path = OMARCHY_THEME_PATH
@@ -471,6 +472,11 @@ class SecureJournalApp:
             "4. To read an entry, select a date on the right and click Load.\n\n"
             "5. To remove an entry, select a date and click Delete.\n\n"
             "6. Use Change Password to re-encrypt all entries with a new password.\n\n"
+            "Shortcuts:\n"
+            "- Ctrl/Cmd+S: Save\n"
+            "- Ctrl/Cmd+L: Load selected entry\n"
+            "- Ctrl/Cmd+D: Delete selected entry\n"
+            "- Ctrl/Cmd+H: Open Help\n\n"
             "Tips:\n"
             "- Keep your password in a safe place (Your Mind). Lost passwords cannot be recovered.\n"
             "- Backups are created automatically if you rotate your passwords. (backup you /local/share)"
@@ -915,6 +921,36 @@ class SecureJournalApp:
                     self.theme_toggle_button.grid()
         except tk.TclError:
             pass
+
+    def _bind_shortcuts(self):
+        bindings = {
+            "<Control-s>": self._shortcut_save,
+            "<Control-l>": self._shortcut_load,
+            "<Control-d>": self._shortcut_delete,
+            "<Control-h>": self._shortcut_help,
+            "<Command-s>": self._shortcut_save,
+            "<Command-l>": self._shortcut_load,
+            "<Command-d>": self._shortcut_delete,
+            "<Command-h>": self._shortcut_help,
+        }
+        for sequence, handler in bindings.items():
+            self.root.bind(sequence, handler)
+
+    def _shortcut_save(self, event=None):
+        self.save_journal_entry()
+        return "break"
+
+    def _shortcut_load(self, event=None):
+        self.load_journal_entry()
+        return "break"
+
+    def _shortcut_delete(self, event=None):
+        self.delete_journal_entry()
+        return "break"
+
+    def _shortcut_help(self, event=None):
+        self.show_help_overlay()
+        return "break"
 
 
     def setup_ui(self):
