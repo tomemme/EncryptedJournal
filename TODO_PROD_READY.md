@@ -45,6 +45,7 @@ Legend:
 ## 8) Accessibility + UX
 - [x] Add keyboard shortcuts (Save/Load/Delete/Help).
 - [ ] Improve focus traversal and focus visibility.
+- [ ] Polish shortcut-driven tree selection flow (for example, focus the entry list before prompting for a password when `Load` is triggered without a selected entry).
 - [ ] Link help overlay to backup/restore guidance.
 
 ## 9) Security Documentation

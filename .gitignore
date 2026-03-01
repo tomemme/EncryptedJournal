@@ -2,6 +2,9 @@ journal.json.gz
 Encrypted Journal Overview.mp4
 run_journal.sh
 .venv/
+__pycache__/
+*.py[cod]
+*$py.class
 
 # Arch packaging build artifacts
 packaging/arch/EncryptedJournal/

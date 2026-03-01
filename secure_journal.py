@@ -1406,6 +1406,22 @@ class SecureJournalApp:
     def on_treeview_select(self, event):
         self.last_action_time = datetime.now()
 
+    def focus_treeview_for_selection(self, message=None):
+        try:
+            first_month = self.treeview.get_children("")
+            if first_month:
+                first_child = self.treeview.get_children(first_month[0])
+                target = first_child[0] if first_child else first_month[0]
+                self.treeview.focus(target)
+                self.treeview.selection_set(target)
+                self.treeview.see(target)
+            self.treeview.focus_set()
+        except tk.TclError:
+            pass
+
+        if message:
+            messagebox.showinfo("Select Entry", message)
+
     def prompt_for_password(self):
         if self.failed_attempts >= self.max_attempts:
             messagebox.showerror(
@@ -2185,38 +2201,46 @@ class SecureJournalApp:
     def load_journal_entry(self):
         self.last_action_time = datetime.now()
 
-        password = self.prompt_for_password()
-        if password is None:
+        try:
+            selected_item = self.treeview.selection()[0]
+        except IndexError:
+            self.focus_treeview_for_selection(
+                "Select a journal entry from the list, then press Load again."
+            )
             return
 
         try:
-            selected_item = self.treeview.selection()[0]
             selected_date = self.treeview.item(selected_item, "text")
-            if self.treeview.parent(selected_item):
-                data = self.load_json()
-                for entry in data:
-                    if entry.get("date") == selected_date:
-                        with secure_password(password) as pwd:
-                            password = None
-                            decrypted_entry = self.decrypt_message(
-                                entry["entry"], pwd
-                            )
-                        self.text_entry.delete("1.0", tk.END)
-                        self.text_entry.insert(tk.END, decrypted_entry)
-                        self.date_entry.delete(0, tk.END)
-                        self.date_entry.insert(0, selected_date)
-                        self.entry_loaded = True
-                        break
-                else:
-                    messagebox.showwarning(
-                        "Warning", "No entry found for the selected date."
-                    )
+            if not self.treeview.parent(selected_item):
+                self.focus_treeview_for_selection(
+                    "Select a dated journal entry, not a month heading."
+                )
+                return
+
+            password = self.prompt_for_password()
+            if password is None:
+                return
+
+            data = self.load_json()
+            for entry in data:
+                if entry.get("date") == selected_date:
+                    with secure_password(password) as pwd:
+                        password = None
+                        decrypted_entry = self.decrypt_message(
+                            entry["entry"], pwd
+                        )
+                    self.text_entry.delete("1.0", tk.END)
+                    self.text_entry.insert(tk.END, decrypted_entry)
+                    self.date_entry.delete(0, tk.END)
+                    self.date_entry.insert(0, selected_date)
+                    self.entry_loaded = True
+                    break
             else:
-                messagebox.showinfo("Information", "Please select a date, not a month.")
+                messagebox.showwarning(
+                    "Warning", "No entry found for the selected date."
+                )
         except ValueError as e:
             messagebox.showerror("Error", str(e))
-        except IndexError:
-            messagebox.showwarning("Warning", "Please select a date from the list.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load entry: {e}")
         finally:
