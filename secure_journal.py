@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, font
+from tkinter import ttk, messagebox, font, filedialog
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import tomllib
@@ -124,6 +124,7 @@ class SecureJournalApp:
         self.help_content_label = None
         self.help_overlay_title_label = None
         self.help_overlay_close_button = None
+        self.settings_dialog = None
         self.password_remember_var = None
         self._init_spellchecker()
         self.current_theme = "dark"
@@ -423,6 +424,15 @@ class SecureJournalApp:
         self.help_overlay_title_label = None
         self.help_overlay_close_button = None
 
+    def close_settings_dialog(self, event=None):
+        if self.settings_dialog and self.settings_dialog.winfo_exists():
+            self.settings_dialog.destroy()
+        self.settings_dialog = None
+
+    def _open_settings_action(self, action):
+        self.close_settings_dialog()
+        action()
+
     def show_help_overlay(self):
         if self.help_overlay and self.help_overlay.winfo_exists():
             try:
@@ -471,7 +481,7 @@ class SecureJournalApp:
             "3. Click Save and enter your password.\n\n"
             "4. To read an entry, select a date on the right and click Load.\n\n"
             "5. To remove an entry, select a date and click Delete.\n\n"
-            "6. Use Change Password to re-encrypt all entries with a new password.\n\n"
+            "6. Use Settings for backups and password rotation.\n\n"
             "Shortcuts:\n"
             "- Ctrl/Cmd+S: Save\n"
             "- Ctrl/Cmd+L: Load selected entry\n"
@@ -479,7 +489,8 @@ class SecureJournalApp:
             "- Ctrl/Cmd+H: Open Help\n\n"
             "Tips:\n"
             "- Keep your password in a safe place (Your Mind). Lost passwords cannot be recovered.\n"
-            "- Backups are created automatically if you rotate your passwords. (backup you /local/share)"
+            "- Settings lets you create a backup, restore a backup, or rotate the journal password.\n"
+            "- Password changes create timestamped backups beside your journal file."
         )
 
         self.help_content_label = tk.Label(
@@ -496,6 +507,67 @@ class SecureJournalApp:
         overlay.lift()
         overlay.focus_force()
         self._sync_help_overlay_geometry()
+
+    def show_settings_dialog(self):
+        if self.settings_dialog and self.settings_dialog.winfo_exists():
+            try:
+                self.settings_dialog.lift()
+                self.settings_dialog.focus_force()
+            except tk.TclError:
+                pass
+            return
+
+        dialog = tk.Toplevel(self.root)
+        self.settings_dialog = dialog
+        dialog.title("Journal Settings")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        dialog.protocol("WM_DELETE_WINDOW", self.close_settings_dialog)
+        dialog.bind("<Escape>", self.close_settings_dialog)
+
+        body = ttk.Frame(dialog, padding=22, style="Omarchy.TFrame")
+        body.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            body,
+            text="Journal Settings",
+            style="Omarchy.TLabel",
+            font=("Verdana", 14, "bold"),
+        ).pack(anchor="w", pady=(0, 8))
+
+        ttk.Label(
+            body,
+            text="Select a maintenance action.",
+            style="Omarchy.TLabel",
+        ).pack(anchor="w", pady=(0, 16))
+
+        actions = ttk.Frame(body, style="Omarchy.TFrame")
+        actions.pack(fill=tk.X)
+        actions.columnconfigure(0, weight=1)
+
+        button_options = [
+            ("Create Backup Now", self.create_manual_backup),
+            ("Restore From Backup", self.restore_journal_backup),
+            ("Rotate Password", self.change_journal_password),
+        ]
+        for row_index, (label, command) in enumerate(button_options):
+            ttk.Button(
+                actions,
+                text=label,
+                command=lambda action=command: self._open_settings_action(action),
+                style="Omarchy.TButton",
+            ).grid(row=row_index, column=0, sticky="ew", pady=4)
+
+        ttk.Button(
+            body,
+            text="Close",
+            command=self.close_settings_dialog,
+            style="Omarchy.TButton",
+        ).pack(anchor="e", pady=(16, 0))
+
+        self._show_modal_dialog(dialog)
+        dialog.wait_window()
 
     def apply_omarchy_colors(self):
         """
@@ -1039,8 +1111,6 @@ class SecureJournalApp:
 
         self.button_frame = ttk.Frame(self.controls_frame, style="Omarchy.TFrame")
         self.button_frame.pack(padx=10, pady=5)
-        for i in range(6):
-            self.button_frame.columnconfigure(i, weight=1)
 
         action_button_padding = (6, 4)
 
@@ -1078,9 +1148,10 @@ class SecureJournalApp:
 
         ttk.Button(
             self.button_frame,
-            text="Change Password",
-            command=self.change_journal_password,
+            text="Settings",
+            command=self.show_settings_dialog,
             style="Omarchy.TButton",
+            padding=action_button_padding,
         ).grid(row=1, column=4, padx=5)
 
         self.theme_toggle_button = ttk.Button(
@@ -1792,6 +1863,116 @@ class SecureJournalApp:
 
         return backup_path
 
+    def create_manual_backup(self):
+        self.last_action_time = datetime.now()
+        if not os.path.exists(self.filename):
+            messagebox.showinfo(
+                "No Journal Found",
+                "There is no journal file to back up yet.",
+            )
+            return
+
+        try:
+            backup_path = self.create_journal_backup()
+        except Exception as error:
+            messagebox.showerror(
+                "Backup Failed",
+                f"Unable to create a backup: {error}",
+            )
+            return
+
+        messagebox.showinfo(
+            "Backup Created",
+            f"A backup was created at:\n{backup_path}",
+        )
+
+    def list_journal_backups(self):
+        base_name = os.path.basename(self.filename)
+        backup_prefix = f"{base_name}.bak-"
+        backup_dir = os.path.dirname(self.filename) or "."
+        if not os.path.isdir(backup_dir):
+            return []
+
+        return sorted(
+            [
+                os.path.join(backup_dir, file_name)
+                for file_name in os.listdir(backup_dir)
+                if file_name.startswith(backup_prefix)
+            ],
+            reverse=True,
+        )
+
+    def restore_journal_backup(self):
+        self.last_action_time = datetime.now()
+
+        backups = self.list_journal_backups()
+        if not backups:
+            messagebox.showinfo(
+                "No Backups Found",
+                "No journal backups were found yet. A backup is created automatically before password rotation.",
+            )
+            return
+
+        backup_dir = os.path.dirname(self.filename) or "."
+        selected_backup = filedialog.askopenfilename(
+            parent=self.root,
+            title="Select Journal Backup",
+            initialdir=backup_dir,
+            initialfile=os.path.basename(backups[0]),
+            filetypes=[
+                ("Journal backups", "*.bak-*"),
+                ("Compressed journal files", "*.gz"),
+                ("All files", "*"),
+            ],
+        )
+        if not selected_backup:
+            return
+
+        data = self._load_json_from_path(selected_backup, show_warnings=False)
+        if data is None:
+            messagebox.showerror(
+                "Restore Failed",
+                "The selected backup is not a valid journal file.",
+            )
+            return
+
+        safety_backup = None
+        if os.path.exists(self.filename):
+            try:
+                safety_backup = self.create_journal_backup()
+            except Exception as error:
+                proceed = messagebox.askyesno(
+                    "Backup Failed",
+                    "The current journal could not be backed up before restore.\n\n"
+                    f"Details: {error}\n\n"
+                    "Continue restoring anyway?",
+                )
+                if not proceed:
+                    return
+
+        try:
+            self.save_json(data)
+        except Exception as error:
+            messagebox.showerror(
+                "Restore Failed",
+                f"Unable to restore the selected backup: {error}",
+            )
+            return
+
+        self.clear_journal_entry()
+        self.update_treeview()
+        self.days_since_label.config(text=self.days_since_last_entry())
+
+        safety_note = (
+            f"\n\nYour previous journal was backed up to:\n{safety_backup}"
+            if safety_backup
+            else ""
+        )
+        messagebox.showinfo(
+            "Restore Complete",
+            f"Journal restored from:\n{selected_backup}{safety_note}",
+        )
+
     def log_password_rotation_failures(self, failed_entries):
         if not failed_entries:
             return None
@@ -1909,34 +2090,42 @@ class SecureJournalApp:
                 except OSError:
                     pass
 
-    def load_json(self):
-        if not os.path.exists(self.filename):
+    def _load_json_from_path(self, path, show_warnings=True):
+        if not os.path.exists(path):
             return []
 
         try:
-            with gzip.open(self.filename, "rt", encoding="utf-8") as f:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
-            messagebox.showwarning(
-                "Warning",
-                "The journal file appears to be corrupted or unreadable. "
-                "It will be ignored until it is replaced with a valid backup.",
-            )
-            self.logger.warning("Failed to read journal file '%s': %s", self.filename, e)
-            return []
+            if show_warnings:
+                messagebox.showwarning(
+                    "Warning",
+                    "The journal file appears to be corrupted or unreadable. "
+                    "It will be ignored until it is replaced with a valid backup.",
+                )
+            self.logger.warning("Failed to read journal file '%s': %s", path, e)
+            return None
 
         if isinstance(data, list):
             return self._sanitize_journal_data(data)
 
-        messagebox.showwarning(
-            "Warning",
-            "The journal file contains unexpected data and will be ignored.",
-        )
+        if show_warnings:
+            messagebox.showwarning(
+                "Warning",
+                "The journal file contains unexpected data and will be ignored.",
+            )
         self.logger.warning(
             "Unexpected journal file contents. Expected a list of entries, got %s.",
             type(data).__name__,
         )
-        return []
+        return None
+
+    def load_json(self):
+        data = self._load_json_from_path(self.filename)
+        if data is None:
+            return []
+        return data
 
     def save_journal_entry(self):
         self.last_action_time = datetime.now()

@@ -13,7 +13,7 @@ Legend:
 ## 2) Backup Retention + Restore
 - [x] Keep only the last 10 backups.
 - [x] Prune older `journal.json.gz.bak-*` files automatically.
-- [ ] Add a restore-from-backup flow in the UI.
+- [x] Add a restore-from-backup flow in the UI.
 
 ## 3) Logging And Error Handling
 - [x] Replace `print(...)` with structured logging.
