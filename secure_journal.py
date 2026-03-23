@@ -893,6 +893,8 @@ class SecureJournalApp:
             pass
 
     def _compute_display_scale(self):
+        screen_width, screen_height = self._get_screen_size()
+
         dpi_scale = 1.0
         try:
             dpi = float(self.root.winfo_fpixels("1i"))
@@ -918,9 +920,25 @@ class SecureJournalApp:
         except Exception:
             geometry_scale = 1.0
 
-        base_scale = max(1.0, dpi_scale, geometry_scale)
-        scale = self._platform_scale_adjust(base_scale, dpi_scale, tk_scaling)
+        screen_scale = _screen_resolution_scale(screen_width, screen_height)
+
+        base_scale = max(1.0, dpi_scale, geometry_scale, screen_scale)
+        scale = self._platform_scale_adjust(
+            base_scale,
+            dpi_scale,
+            tk_scaling,
+            screen_width,
+            screen_height,
+        )
         return max(1.0, scale)
+
+    def _get_screen_size(self):
+        try:
+            width = max(1, int(self.root.winfo_screenwidth()))
+            height = max(1, int(self.root.winfo_screenheight()))
+            return width, height
+        except Exception:
+            return 1920, 1080
 
     def _get_tk_scaling(self):
         try:
@@ -931,21 +949,31 @@ class SecureJournalApp:
         except Exception:
             return 1.0
 
-    def _platform_scale_adjust(self, base_scale, dpi_scale, tk_scaling):
+    def _platform_scale_adjust(
+        self, base_scale, dpi_scale, tk_scaling, screen_width, screen_height
+    ):
         scale = max(1.0, base_scale)
+        hidpi_resolution = _looks_like_hidpi_laptop(screen_width, screen_height)
+        hidpi_signal = dpi_scale >= 1.42 or tk_scaling >= 1.42 or hidpi_resolution
         try:
             if sys.platform == "darwin":
                 # Older mac hardware often reports ~72 DPI with tk scaling near 1.0.
                 # Push those panels to a noticeably larger baseline so text climbs
                 # roughly two points while still respecting explicit tk scaling.
-                if dpi_scale < 1.3:
+                if hidpi_resolution:
+                    scale = max(scale, 1.34)
+                elif dpi_scale < 1.3:
                     scale = max(scale, 1.22)
                 else:
                     scale = max(scale, min(dpi_scale, 1.32))
                 if tk_scaling > scale:
                     scale = tk_scaling
-                return min(scale, 1.38)
+                return min(scale, 1.46)
             else:
+                if hidpi_signal:
+                    boosted = max(base_scale, dpi_scale, tk_scaling, 1.24)
+                    return min(boosted, 1.38)
+
                 # Temper automatic scaling so Windows/Linux builds that already looked
                 # correct stay close to their original size while still honoring user
                 # adjustments and slight DPI inflation.
@@ -2342,6 +2370,25 @@ def _clamp(value, minimum, maximum):
     return max(minimum, min(maximum, value))
 
 
+def _screen_resolution_scale(screen_width, screen_height):
+    try:
+        resolution_ratio = (screen_width * screen_height) / float(1920 * 1080)
+        return resolution_ratio**0.08
+    except Exception:
+        return 1.0
+
+
+def _looks_like_hidpi_laptop(screen_width, screen_height):
+    # Retina-era 13" MacBook Pro often runs around 2560x1600 points/pixels
+    # in Linux/macOS setups where Tk reports conservative DPI values.
+    return (
+        screen_width >= 2200
+        and screen_height >= 1300
+        and screen_width <= 3200
+        and screen_height <= 2000
+    )
+
+
 def _resolve_startup_scaling(root):
     # Optional override for troubleshooting and per-device tuning.
     override = os.environ.get("ENCRYPTED_JOURNAL_UI_SCALE")
@@ -2362,12 +2409,16 @@ def _resolve_startup_scaling(root):
     try:
         screen_width = max(1, int(root.winfo_screenwidth()))
         screen_height = max(1, int(root.winfo_screenheight()))
-        resolution_ratio = (screen_width * screen_height) / float(1920 * 1080)
-        resolution_scale = resolution_ratio**0.08
     except Exception:
-        resolution_scale = 1.0
+        screen_width, screen_height = 1920, 1080
 
-    return _clamp(dpi_scale * resolution_scale, 0.95, 1.45)
+    resolution_scale = _screen_resolution_scale(screen_width, screen_height)
+    startup_scale = dpi_scale * resolution_scale
+
+    if _looks_like_hidpi_laptop(screen_width, screen_height):
+        startup_scale = max(startup_scale, 1.28)
+
+    return _clamp(startup_scale, 0.95, 1.52)
 
 
 def _set_startup_geometry(root):
