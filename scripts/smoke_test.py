@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
 
@@ -100,6 +101,51 @@ def main():
 
         saved_data = app.load_json()
         _assert(len(saved_data) == 2, "Expected two encrypted entries after save.")
+
+        app._current_datetime = lambda: datetime(2026, 2, 24, 12, 30, 15)
+        app.refresh_days_since_label()
+        _assert(
+            app.days_since_label.cget("text") == "You have made an entry today.",
+            "Days-since label should reflect same-day entry status.",
+        )
+
+        scheduled = {}
+        original_after = app.root.after
+
+        def fake_after(delay_ms, callback):
+            scheduled["delay_ms"] = delay_ms
+            scheduled["callback"] = callback
+            return "after-test-id"
+
+        try:
+            if app._days_since_refresh_after_id is not None:
+                app.root.after_cancel(app._days_since_refresh_after_id)
+                app._days_since_refresh_after_id = None
+
+            app.root.after = fake_after
+            app._schedule_days_since_refresh()
+            _assert(
+                scheduled.get("delay_ms") == 41385000,
+                f"Unexpected midnight refresh delay: {scheduled.get('delay_ms')}",
+            )
+            _assert(
+                scheduled.get("callback") == app._handle_day_rollover,
+                "Midnight refresh should schedule the rollover callback.",
+            )
+
+            app._current_datetime = lambda: datetime(2026, 2, 25, 0, 0, 5)
+            app._handle_day_rollover()
+            _assert(
+                app.days_since_label.cget("text")
+                == "It has been 1 day since your last entry.",
+                "Days-since label should update after midnight rollover.",
+            )
+            _assert(
+                app._days_since_refresh_after_id == "after-test-id",
+                "Rollover should schedule the next midnight refresh.",
+            )
+        finally:
+            app.root.after = original_after
 
         # Load and validate first entry.
         _assert(_select_date_node(app, primary_date), "Could not select primary date.")

@@ -9,7 +9,7 @@ import shutil
 import sys
 import gzip
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import getpass
 try:
     import enchant
@@ -131,6 +131,7 @@ class SecureJournalApp:
         self.current_layout = None
         self._resize_after_id = None
         self._pending_geometry = None
+        self._days_since_refresh_after_id = None
         self.base_text_size = 12
         self.base_tree_font_size = 11
         self.base_heading_font_size = 11
@@ -144,6 +145,9 @@ class SecureJournalApp:
         self.last_typography_scale = None
 
         self.setup_ui()
+        self.root.protocol("WM_DELETE_WINDOW", self.close_app)
+        self.refresh_days_since_label()
+        self._schedule_days_since_refresh()
         self._bind_shortcuts()
         self.load_theme_file()  # strict: raise if missing
         self.apply_theme()
@@ -1022,6 +1026,48 @@ class SecureJournalApp:
         except tk.TclError:
             pass
 
+    def _current_datetime(self):
+        return datetime.now()
+
+    def _current_date(self):
+        return self._current_datetime().date()
+
+    def refresh_days_since_label(self):
+        if not hasattr(self, "days_since_label"):
+            return
+        try:
+            self.days_since_label.config(text=self.days_since_last_entry())
+        except tk.TclError:
+            pass
+
+    def _milliseconds_until_next_midnight(self, now=None):
+        current = now or self._current_datetime()
+        next_midnight = datetime.combine(
+            current.date() + timedelta(days=1), datetime.min.time()
+        )
+        return max(1, int((next_midnight - current).total_seconds() * 1000))
+
+    def _schedule_days_since_refresh(self):
+        if self._days_since_refresh_after_id is not None:
+            try:
+                self.root.after_cancel(self._days_since_refresh_after_id)
+            except Exception:
+                pass
+            self._days_since_refresh_after_id = None
+
+        try:
+            delay_ms = self._milliseconds_until_next_midnight()
+            self._days_since_refresh_after_id = self.root.after(
+                delay_ms, self._handle_day_rollover
+            )
+        except Exception:
+            self._days_since_refresh_after_id = None
+
+    def _handle_day_rollover(self):
+        self._days_since_refresh_after_id = None
+        self.refresh_days_since_label()
+        self._schedule_days_since_refresh()
+
     def _bind_shortcuts(self):
         bindings = {
             "<Control-s>": self._shortcut_save,
@@ -1319,7 +1365,7 @@ class SecureJournalApp:
             return "No valid entries found."
 
         most_recent_date = max(dates)
-        current_date = datetime.now().date()
+        current_date = self._current_date()
         days_since = (current_date - most_recent_date).days
 
         if days_since == 0:
@@ -1455,7 +1501,7 @@ class SecureJournalApp:
             messagebox.showerror(
                 "Error", "Too many failed attempts. Application will exit."
             )
-            self.root.destroy()
+            self.close_app()
             return None
 
         dialog = tk.Toplevel(self.root)
@@ -2005,7 +2051,7 @@ class SecureJournalApp:
 
         self.clear_journal_entry()
         self.update_treeview()
-        self.days_since_label.config(text=self.days_since_last_entry())
+        self.refresh_days_since_label()
 
         safety_note = (
             f"\n\nYour previous journal was backed up to:\n{safety_backup}"
@@ -2221,7 +2267,7 @@ class SecureJournalApp:
 
                 self.clear_journal_entry()
                 self.update_treeview()
-                self.days_since_label.config(text=self.days_since_last_entry())
+                self.refresh_days_since_label()
 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save entry: {str(e)}")
@@ -2320,7 +2366,7 @@ class SecureJournalApp:
                 messagebox.showinfo("Success", "Journal entry deleted successfully.")
                 self.clear_journal_entry()
                 self.update_treeview()
-                self.days_since_label.config(text=self.days_since_last_entry())
+                self.refresh_days_since_label()
             else:
                 messagebox.showinfo(
                     "Information", "Please select a date to delete, not a month."
@@ -2336,6 +2382,15 @@ class SecureJournalApp:
         self.text_entry.delete("1.0", tk.END)
         self.date_entry.delete(0, tk.END)
         self.entry_loaded = False
+
+    def close_app(self):
+        if self._days_since_refresh_after_id is not None:
+            try:
+                self.root.after_cancel(self._days_since_refresh_after_id)
+            except Exception:
+                pass
+            self._days_since_refresh_after_id = None
+        self.root.destroy()
 
     def update_treeview(self):
         data = self.load_json()
