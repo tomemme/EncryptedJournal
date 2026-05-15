@@ -5,6 +5,8 @@ run_journal.sh
 __pycache__/
 *.py[cod]
 *$py.class
+.backup-status
+BACKUP STATUS.txt
 
 # Arch packaging build artifacts
 packaging/arch/EncryptedJournal/
