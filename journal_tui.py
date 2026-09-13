@@ -16,7 +16,16 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, Tree
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Footer,
+    Header,
+    Input,
+    Label,
+    TextArea,
+    Tree,
+)
 
 import journal_core
 
@@ -25,36 +34,192 @@ logger = logging.getLogger("journal_tui")
 MAX_FAILED_ATTEMPTS = 5  # matches SecureJournalApp.max_attempts in secure_journal.py
 
 
-class EntryViewPlaceholderScreen(Screen):
-    """Placeholder shown when opening a specific entry (new or existing).
+class EntryViewScreen(Screen):
+    """Create/view/edit a single journal entry.
 
-    Task 6 replaces this with the real EntryViewScreen. It exists only so
-    n/enter/v navigation out of EntryListScreen is observably distinguishable
-    ahead of Task 6 building the real editor/viewer.
+    Two modes land on this same screen:
+    - "new": empty body, date pre-filled to today.
+    - "view": body decrypted from the on-disk entry for `date` and
+      populated; date pre-filled to that date. If decryption fails (e.g. a
+      stale in-memory app.password), falls back to an in-place password
+      re-prompt instead of crashing or showing garbage.
+
+    ctrl+s saves (matching SecureJournalApp.save_journal_entry's exact
+    validation/error strings and update-or-append-by-date logic); escape
+    discards and returns to EntryListScreen unsaved.
     """
 
-    BINDINGS = [Binding("escape", "back", "Back")]
+    BINDINGS = [
+        Binding("ctrl+s", "save_entry", "Save"),
+        Binding("escape", "cancel", "Cancel"),
+    ]
 
     def __init__(self, *, mode: str, date: str, **kwargs) -> None:
         super().__init__(**kwargs)
         self.mode = mode
         self.date = date
+        self._encrypted_entry_text: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="entryview-placeholder-dialog"):
-            yield Label(
-                f"Entry view ({self.mode}): {self.date}",
-                id="entryview-placeholder-message",
-            )
-            yield Label(
-                "Entry editor/viewer arrives in Task 6.",
-                id="entryview-placeholder-submessage",
-            )
+        with Vertical(id="entryview-dialog"):
+            yield Label(self._title_text(), id="entryview-title")
+            with Vertical(id="entryview-editor"):
+                yield Label("Date (YYYY-MM-DD):", id="entryview-date-label")
+                yield Input(id="entryview-date-input")
+                yield TextArea(id="entryview-body")
+                yield Label("", id="entryview-message")
+            with Vertical(id="entryview-reprompt", classes="hidden"):
+                yield Label("", id="entryview-reprompt-message")
+                yield Input(
+                    placeholder="Password",
+                    password=True,
+                    id="entryview-reprompt-password",
+                )
+                yield Button(
+                    "Retry", id="entryview-reprompt-submit", variant="primary"
+                )
         yield Footer()
 
-    def action_back(self) -> None:
+    def _title_text(self) -> str:
+        label = "New entry" if self.mode == "new" else "View/edit entry"
+        return f"{label} — {self.date}"
+
+    def on_mount(self) -> None:
+        self.query_one("#entryview-date-input", Input).value = self.date
+        if self.mode == "view":
+            self._load_entry_for_view()
+        else:
+            self.query_one("#entryview-body", TextArea).focus()
+
+    # -- view-mode decrypt / password re-prompt -----------------------
+
+    def _load_entry_for_view(self) -> None:
+        data = journal_core.load_json(self.app.journal_path, logger=logger)
+        entry = next(
+            (e for e in data if e.get("date") == self.date), None
+        )
+        if entry is None:
+            self._set_message(f"No entry found for {self.date}.")
+            return
+        self._encrypted_entry_text = entry.get("entry", "")
+        self._try_decrypt_and_populate()
+
+    def _try_decrypt_and_populate(self) -> None:
+        try:
+            plaintext = journal_core.decrypt_message(
+                self._encrypted_entry_text, self.app.password
+            )
+        except ValueError:
+            self._show_password_reprompt(
+                "Could not decrypt this entry with the current password. "
+                "Enter the correct password to continue."
+            )
+            return
+        self.query_one("#entryview-body", TextArea).text = plaintext
+        self._show_editor()
+
+    def _show_password_reprompt(self, message: str) -> None:
+        self.query_one("#entryview-editor", Vertical).add_class("hidden")
+        self.query_one("#entryview-reprompt", Vertical).remove_class("hidden")
+        self.query_one("#entryview-reprompt-message", Label).update(message)
+        password_input = self.query_one("#entryview-reprompt-password", Input)
+        password_input.value = ""
+        password_input.focus()
+
+    def _show_editor(self) -> None:
+        self.query_one("#entryview-reprompt", Vertical).add_class("hidden")
+        self.query_one("#entryview-editor", Vertical).remove_class("hidden")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "entryview-reprompt-password":
+            self._retry_password(event.input.value)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "entryview-reprompt-submit":
+            self._retry_password(
+                self.query_one("#entryview-reprompt-password", Input).value
+            )
+
+    def _retry_password(self, typed_password: str) -> None:
+        candidate = bytearray(typed_password, "utf-8")
+        try:
+            plaintext = journal_core.decrypt_message(
+                self._encrypted_entry_text, candidate
+            )
+        except ValueError:
+            for i in range(len(candidate)):
+                candidate[i] = 0
+            self.query_one("#entryview-reprompt-message", Label).update(
+                "Incorrect password. Try again."
+            )
+            self.query_one("#entryview-reprompt-password", Input).value = ""
+            return
+        # Correct password: adopt it as the app's current session password.
+        self.app._wipe_password()
+        self.app.password = candidate
+        self.query_one("#entryview-body", TextArea).text = plaintext
+        self._show_editor()
+
+    # -- save / cancel --------------------------------------------------
+
+    def _set_message(self, text: str) -> None:
+        self.query_one("#entryview-message", Label).update(text)
+
+    def action_save_entry(self) -> None:
+        body_area = self.query_one("#entryview-body", TextArea)
+        date_input = self.query_one("#entryview-date-input", Input)
+
+        journal_entry = body_area.text.strip()
+        date_str = date_input.value.strip()
+
+        if not journal_entry:
+            self._set_message("Journal entry cannot be empty.")
+            return
+
+        if not date_str:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+        else:
+            try:
+                datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                self._set_message("Invalid date format. Use YYYY-MM-DD")
+                return
+
+        try:
+            encrypted_entry = journal_core.encrypt_message(
+                journal_entry, self.app.password
+            )
+        except Exception as error:
+            self._set_message(f"Failed to save entry: {error}")
+            return
+
+        data = journal_core.load_json(self.app.journal_path, logger=logger)
+
+        for existing_entry in data:
+            if existing_entry.get("date") == date_str:
+                existing_entry["entry"] = encrypted_entry
+                break
+        else:
+            data.append({"date": date_str, "entry": encrypted_entry})
+
+        try:
+            journal_core.save_json(self.app.journal_path, data, logger=logger)
+        except Exception as error:
+            self._set_message(f"Failed to save entry: {error}")
+            return
+
+        self._return_to_list(f"Saved entry for {date_str}.")
+
+    def action_cancel(self) -> None:
         self.app.pop_screen()
+
+    def _return_to_list(self, message: str) -> None:
+        self.app.pop_screen()
+        list_screen = self.app.screen
+        if isinstance(list_screen, EntryListScreen):
+            list_screen.refresh_entries()
+            list_screen._set_message(message)
 
 
 class EntryListScreen(Screen):
@@ -135,9 +300,7 @@ class EntryListScreen(Screen):
 
     def action_new_entry(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
-        self.app.push_screen(
-            EntryViewPlaceholderScreen(mode="new", date=today)
-        )
+        self.app.push_screen(EntryViewScreen(mode="new", date=today))
 
     def action_view_entry(self) -> None:
         self._view_node(self.query_one("#entrylist-tree", Tree).cursor_node)
@@ -159,9 +322,7 @@ class EntryListScreen(Screen):
         if kind != "date":
             return
         self._set_message("")
-        self.app.push_screen(
-            EntryViewPlaceholderScreen(mode="view", date=node.data["date"])
-        )
+        self.app.push_screen(EntryViewScreen(mode="view", date=node.data["date"]))
 
     def action_delete_entry(self) -> None:
         node = self.query_one("#entrylist-tree", Tree).cursor_node

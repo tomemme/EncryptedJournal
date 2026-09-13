@@ -88,22 +88,64 @@ Screen {
     padding-top: 1;
 }
 
-#entryview-placeholder-dialog {
-    width: 60;
-    height: auto;
+.hidden {
+    display: none;
+}
+
+#entryview-dialog {
+    width: 80%;
+    height: 80%;
     padding: 1 2;
     border: round $success;
     background: $panel;
 }
 
-#entryview-placeholder-message {
+#entryview-title {
     text-style: bold;
     width: 100%;
     content-align: center middle;
+    padding-bottom: 1;
 }
 
-#entryview-placeholder-submessage {
-    width: 100%;
-    content-align: center middle;
+#entryview-editor {
+    height: 1fr;
+}
+
+#entryview-date-label {
     color: $text-muted;
+}
+
+#entryview-date-input {
+    margin-bottom: 1;
+}
+
+#entryview-body {
+    height: 1fr;
+    border: round $primary-background;
+}
+
+#entryview-message {
+    color: $warning;
+    height: auto;
+    min-height: 1;
+    padding-top: 1;
+}
+
+#entryview-reprompt {
+    height: auto;
+}
+
+#entryview-reprompt-message {
+    color: $warning;
+    height: auto;
+    min-height: 1;
+    padding-bottom: 1;
+}
+
+#entryview-reprompt-password {
+    margin-bottom: 1;
+}
+
+#entryview-reprompt-submit {
+    width: 100%;
 }
