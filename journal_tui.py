@@ -30,6 +30,16 @@ from textual.widgets import (
 import journal_core
 
 logger = logging.getLogger("journal_tui")
+# No handler configured here on purpose: without one, a warning from
+# journal_core (e.g. load_json skipping a malformed record) falls through to
+# logging.lastResort and writes raw to stderr, which corrupts the
+# actively-rendered Textual frame. A NullHandler silences that fallback
+# without adding new logging infrastructure - secure_journal.py's
+# RotatingFileHandler setup is a bound SecureJournalApp method tied to GUI
+# state (self.filename), and journal_tui.py must never import
+# secure_journal, so it isn't reusable here. User-facing errors/status are
+# already surfaced via screen UI, not via this logger.
+logger.addHandler(logging.NullHandler())
 
 MAX_FAILED_ATTEMPTS = 5  # matches SecureJournalApp.max_attempts in secure_journal.py
 
@@ -168,7 +178,7 @@ class EntryViewScreen(Screen):
             reference_ciphertext = self._encrypted_entry_text
 
         plaintext = None
-        if reference_ciphertext:
+        if reference_ciphertext is not None:
             try:
                 plaintext = journal_core.decrypt_message(
                     reference_ciphertext, candidate
@@ -184,6 +194,7 @@ class EntryViewScreen(Screen):
 
         # Correct password (or nothing on disk yet to validate against):
         # adopt it as the app's current session password.
+        self.query_one("#entryview-reprompt-password", Input).value = ""
         self.app._wipe_password()
         self.app.password = candidate
         self._show_editor()
@@ -408,6 +419,7 @@ class DeleteConfirmScreen(ModalScreen[bool]):
             self.query_one("#delete-confirm-reprompt-password", Input).value = ""
             return
         # Correct password: adopt it as the app's current session password.
+        self.query_one("#delete-confirm-reprompt-password", Input).value = ""
         self.app._wipe_password()
         self.app.password = candidate
         self._show_prompt()
@@ -702,8 +714,15 @@ class JournalApp(App):
 
         # Session lock: threshold (seconds of inactivity before the
         # password is auto-wiped) and the clock it's measured against.
-        self.lock_seconds = journal_core.env_int(
-            "ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS", DEFAULT_LOCK_SECONDS
+        # Clamped to a minimum of 1s: env_int (like env_bool) is permissive
+        # by design and won't reject 0/negative values itself, but a
+        # non-positive threshold here would re-lock the session immediately
+        # after every action, making the app unusable.
+        self.lock_seconds = max(
+            1,
+            journal_core.env_int(
+                "ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS", DEFAULT_LOCK_SECONDS
+            ),
         )
         self.last_action_time = datetime.now()
 

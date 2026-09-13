@@ -24,6 +24,7 @@ package() {
 
   install -d "$pkgdir/usr/share/encrypted-journal"
   install -Dm755 secure_journal.py "$pkgdir/usr/share/encrypted-journal/secure_journal.py"
+  install -Dm644 journal_core.py "$pkgdir/usr/share/encrypted-journal/journal_core.py"
   install -Dm644 azure.tcl "$pkgdir/usr/share/encrypted-journal/azure.tcl"
   cp -r theme "$pkgdir/usr/share/encrypted-journal/"
 

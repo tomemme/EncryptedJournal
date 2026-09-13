@@ -169,17 +169,140 @@ async def _run(journal_path):
         _assert(not app.is_running, "App should have exited after 'q'.")
 
 
+async def _run_session_lock_scenario(journal_path):
+    """Session-lock reprompt-and-resume scenario (Task 8).
+
+    By the time `_run()` above finishes, the journal at `journal_path` has
+    had its one entry deleted again, so it is empty on disk here - a fresh
+    JournalApp() unlocks it the same "nothing to validate against yet" way
+    UnlockScreen.attempt_unlock() handles any brand-new journal.
+
+    Runs in its own run_test() block (a second JournalApp instance) with
+    ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS=1 so the inactivity timer fires
+    quickly and deterministically, independent of the default 300s
+    threshold `_run()` relies on staying stable throughout its own flow.
+    """
+    import journal_core
+    from journal_tui import EntryListScreen, EntryViewScreen, JournalApp, UnlockScreen
+
+    entry_date = "2026-05-01"
+    entry_body = "Session-lock reprompt scenario body."
+    password = "smoke-test-password"
+
+    original_lock_seconds = os.environ.get("ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS")
+    os.environ["ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS"] = "1"
+    try:
+        app = JournalApp()
+        async with app.run_test() as pilot:
+            _assert(
+                app.lock_seconds == 1,
+                f"Expected lock_seconds == 1 from the env override, got {app.lock_seconds}.",
+            )
+
+            # Unlock the (now-empty) journal.
+            _assert(
+                isinstance(app.screen, UnlockScreen),
+                f"Expected UnlockScreen on mount, got {type(app.screen).__name__}.",
+            )
+            password_input = app.screen.query_one("#password-input")
+            password_input.value = password
+            await pilot.press("enter")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryListScreen),
+                f"Unlock did not reach EntryListScreen, got {type(app.screen).__name__}.",
+            )
+
+            # Start a new entry and fill it in, but don't save yet.
+            await pilot.press("n")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryViewScreen),
+                f"'n' did not open EntryViewScreen, got {type(app.screen).__name__}.",
+            )
+            view_screen = app.screen
+            view_screen.query_one("#entryview-date-input").value = entry_date
+            view_screen.query_one("#entryview-body").text = entry_body
+
+            # Wait past the 1s inactivity threshold so the session-lock
+            # timer fires and wipes app.password before we try to save.
+            await asyncio.sleep(1.5)
+            _assert(
+                app.password is None,
+                "Session lock should have wiped app.password once the "
+                "inactivity threshold elapsed.",
+            )
+
+            # Trigger the save. Since app.password is now None, this must
+            # show the in-place password reprompt rather than crash or
+            # silently drop the edit.
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryViewScreen),
+                "Should still be on EntryViewScreen for the in-place reprompt "
+                f"after a locked ctrl+s, got {type(app.screen).__name__}.",
+            )
+            reprompt = view_screen.query_one("#entryview-reprompt")
+            _assert(
+                "hidden" not in reprompt.classes,
+                "Password reprompt should be visible after a session-lock "
+                "expiry on save, but it's still hidden.",
+            )
+
+            # Submit the correct password to resume the deferred save.
+            reprompt_password = view_screen.query_one(
+                "#entryview-reprompt-password"
+            )
+            reprompt_password.value = password
+            await pilot.press("enter")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryListScreen),
+                "Reprompt-and-resume did not complete the save and return "
+                f"to EntryListScreen, got {type(app.screen).__name__}.",
+            )
+
+        # Verify on-disk, independent of in-process state: the save that
+        # resumed after reprompt must have actually written and be
+        # decryptable with the (correct) re-entered password.
+        on_disk = journal_core.load_json(journal_path)
+        saved_entry = next(
+            (e for e in on_disk if e.get("date") == entry_date), None
+        )
+        _assert(
+            saved_entry is not None,
+            f"No on-disk entry found for {entry_date} after lock-reprompt save.",
+        )
+        decrypted = journal_core.decrypt_message(
+            saved_entry["entry"], bytearray(password, "utf-8")
+        )
+        _assert(
+            decrypted == entry_body,
+            "On-disk decrypted body after lock-reprompt save did not match "
+            f"what was typed: expected {entry_body!r}, got {decrypted!r}.",
+        )
+    finally:
+        if original_lock_seconds is not None:
+            os.environ["ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS"] = original_lock_seconds
+        else:
+            os.environ.pop("ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS", None)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tui-smoke-") as temp_dir:
         journal_path = os.path.join(temp_dir, "journal.json.gz")
 
         original_journal_file = os.environ.get("ENCRYPTED_JOURNAL_FILE")
         original_use_keyring = os.environ.get("ENCRYPTED_JOURNAL_USE_KEYRING")
+        original_lock_seconds = os.environ.get("ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS")
         try:
             os.environ["ENCRYPTED_JOURNAL_FILE"] = journal_path
             os.environ.pop("ENCRYPTED_JOURNAL_USE_KEYRING", None)
+            os.environ.pop("ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS", None)
 
             asyncio.run(_run(journal_path))
+            asyncio.run(_run_session_lock_scenario(journal_path))
 
             print("PASS: TUI smoke test completed successfully.")
             return 0
@@ -195,6 +318,10 @@ def main():
                 os.environ["ENCRYPTED_JOURNAL_USE_KEYRING"] = original_use_keyring
             else:
                 os.environ.pop("ENCRYPTED_JOURNAL_USE_KEYRING", None)
+            if original_lock_seconds is not None:
+                os.environ["ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS"] = original_lock_seconds
+            else:
+                os.environ.pop("ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS", None)
 
 
 if __name__ == "__main__":
