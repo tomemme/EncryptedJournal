@@ -61,3 +61,49 @@ Screen {
     content-align: center middle;
     color: $text-muted;
 }
+
+#entrylist-dialog {
+    width: 80%;
+    height: 80%;
+    padding: 1 2;
+    border: round $primary;
+    background: $panel;
+}
+
+#entrylist-days-status {
+    width: 100%;
+    padding-bottom: 1;
+    color: $text-muted;
+}
+
+#entrylist-tree {
+    height: 1fr;
+    border: round $primary-background;
+}
+
+#entrylist-message {
+    color: $warning;
+    height: auto;
+    min-height: 1;
+    padding-top: 1;
+}
+
+#entryview-placeholder-dialog {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    border: round $success;
+    background: $panel;
+}
+
+#entryview-placeholder-message {
+    text-style: bold;
+    width: 100%;
+    content-align: center middle;
+}
+
+#entryview-placeholder-submessage {
+    width: 100%;
+    content-align: center middle;
+    color: $text-muted;
+}

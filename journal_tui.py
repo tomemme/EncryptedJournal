@@ -10,11 +10,13 @@ only journal_core plus Textual, so it stays usable headless / over SSH.
 import getpass
 import logging
 import os
+from datetime import datetime
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Input, Label
+from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, Tree
 
 import journal_core
 
@@ -23,22 +25,167 @@ logger = logging.getLogger("journal_tui")
 MAX_FAILED_ATTEMPTS = 5  # matches SecureJournalApp.max_attempts in secure_journal.py
 
 
-class UnlockedPlaceholderScreen(Screen):
-    """Placeholder shown after a successful unlock.
+class EntryViewPlaceholderScreen(Screen):
+    """Placeholder shown when opening a specific entry (new or existing).
 
-    Task 5 replaces this with the real EntryListScreen. It exists only so
-    unlock-success is observably distinguishable from unlock-failure (the
-    app is no longer on UnlockScreen).
+    Task 6 replaces this with the real EntryViewScreen. It exists only so
+    n/enter/v navigation out of EntryListScreen is observably distinguishable
+    ahead of Task 6 building the real editor/viewer.
     """
+
+    BINDINGS = [Binding("escape", "back", "Back")]
+
+    def __init__(self, *, mode: str, date: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.mode = mode
+        self.date = date
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="unlocked-dialog"):
-            yield Label("Journal unlocked.", id="unlocked-message")
+        with Vertical(id="entryview-placeholder-dialog"):
             yield Label(
-                "Entry list UI arrives in Task 5.", id="unlocked-submessage"
+                f"Entry view ({self.mode}): {self.date}",
+                id="entryview-placeholder-message",
+            )
+            yield Label(
+                "Entry editor/viewer arrives in Task 6.",
+                id="entryview-placeholder-submessage",
             )
         yield Footer()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+
+class EntryListScreen(Screen):
+    """Main navigation screen: a Tree of journal entries grouped by
+    Year-Month, shown after a successful unlock.
+    """
+
+    BINDINGS = [
+        Binding("n", "new_entry", "New"),
+        Binding("v", "view_entry", "View"),
+        Binding("d", "delete_entry", "Delete"),
+        Binding("l", "lock", "Lock"),
+        Binding("q", "quit_app", "Quit"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="entrylist-dialog"):
+            yield Label("", id="entrylist-days-status")
+            yield Tree("Journal Entries", id="entrylist-tree")
+            yield Label("", id="entrylist-message")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        tree = self.query_one("#entrylist-tree", Tree)
+        tree.root.data = {"kind": "root"}
+        tree.show_root = False
+        self.refresh_entries()
+        tree.focus()
+
+    def refresh_entries(self) -> None:
+        """Reload journal data from disk and repopulate the Tree.
+
+        Adapted from SecureJournalApp.update_treeview's grouping/sort logic:
+        group by date_str[:7] (YYYY-MM), sort groups and dates within each
+        group descending (most recent first).
+        """
+        data = journal_core.load_json(self.app.journal_path, logger=logger)
+
+        self.query_one("#entrylist-days-status", Label).update(
+            journal_core.days_since_last_entry(data)
+        )
+
+        tree = self.query_one("#entrylist-tree", Tree)
+        tree.clear()
+        tree.root.data = {"kind": "root"}
+
+        grouped_data = {}
+        for entry in data:
+            date_str = entry.get("date")
+            if not date_str:
+                continue
+            year_month = date_str[:7]
+            grouped_data.setdefault(year_month, []).append(date_str)
+
+        sorted_year_months = sorted(
+            grouped_data.keys(),
+            key=lambda ym: datetime.strptime(ym, "%Y-%m"),
+            reverse=True,
+        )
+
+        for year_month in sorted_year_months:
+            dates = sorted(
+                grouped_data[year_month],
+                key=lambda date: datetime.strptime(date, "%Y-%m-%d"),
+                reverse=True,
+            )
+            month_node = tree.root.add(
+                year_month, data={"kind": "month"}, expand=False
+            )
+            for date_str in dates:
+                month_node.add_leaf(
+                    date_str, data={"kind": "date", "date": date_str}
+                )
+
+    def _set_message(self, text: str) -> None:
+        self.query_one("#entrylist-message", Label).update(text)
+
+    def action_new_entry(self) -> None:
+        today = datetime.now().strftime("%Y-%m-%d")
+        self.app.push_screen(
+            EntryViewPlaceholderScreen(mode="new", date=today)
+        )
+
+    def action_view_entry(self) -> None:
+        self._view_node(self.query_one("#entrylist-tree", Tree).cursor_node)
+
+    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        # Fired by Tree's own "enter" binding (Tree.BINDINGS binds enter to
+        # select_cursor before it would reach this screen's own bindings).
+        self._view_node(event.node)
+
+    def _view_node(self, node) -> None:
+        if node is None or node.data is None:
+            return
+        kind = node.data.get("kind")
+        if kind == "month":
+            self._set_message(
+                "Select a dated journal entry, not a month heading."
+            )
+            return
+        if kind != "date":
+            return
+        self._set_message("")
+        self.app.push_screen(
+            EntryViewPlaceholderScreen(mode="view", date=node.data["date"])
+        )
+
+    def action_delete_entry(self) -> None:
+        node = self.query_one("#entrylist-tree", Tree).cursor_node
+        if node is None or node.data is None:
+            return
+        kind = node.data.get("kind")
+        if kind == "month":
+            self._set_message("Please select a date to delete, not a month.")
+            return
+        if kind != "date":
+            return
+        # TODO(Task 7): replace with the real delete-confirmation modal.
+        self._set_message(
+            f"Delete requested for {node.data['date']} "
+            "(confirmation dialog arrives in Task 7)."
+        )
+
+    def action_lock(self) -> None:
+        # TODO(Task 8): replace with the full timer-based session lock.
+        self.app._wipe_password()
+        self.app.push_screen(UnlockScreen())
+
+    def action_quit_app(self) -> None:
+        self.app.exit()
 
 
 class UnlockScreen(Screen):
@@ -148,7 +295,7 @@ class UnlockScreen(Screen):
         password_input.value = ""
         typed_password = None  # drop our only other reference to the str
 
-        self.app.push_screen(UnlockedPlaceholderScreen())
+        self.app.push_screen(EntryListScreen())
 
 
 class JournalApp(App):
