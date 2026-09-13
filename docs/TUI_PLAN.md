@@ -148,7 +148,11 @@ this task runs):
 
 10. **`keyring_get_password(service, username, *, available=True, logger=None)`**,
     **`keyring_set_password(service, username, password, *, available=True, logger=None)`**,
-    **`keyring_clear_password(service, username, *, available=True, logger=None)`** — from
+    **`keyring_clear_password(service, username, *, available=True, logger=None)`** — first add the
+    same guarded import `secure_journal.py` already has near its top
+    (`try: import keyring / except ImportError: keyring = None`) to `journal_core.py` — `keyring`
+    is an optional dependency not in `requirements.txt`, so this must not be an unconditional
+    `import keyring`. Then, from
     `_keyring_get_password` / `_keyring_set_password` / `_keyring_clear_password`. If
     `not available`, behave exactly as today's `not self.keyring_available` short-circuit (`get`
     returns `None`; `set`/`clear` no-op). On the `except Exception as error` branches, call
@@ -179,7 +183,10 @@ this task runs):
     filename it doesn't have (this only ever reaches a log file, exact wording is not
     user-facing/load-bearing).
 
-15. **`save_json(filename, data, *, logger=None, warn_callback=None)`** — from `save_json`. This is
+15. **`save_json(filename, data, *, logger=None, warn_callback=None)`** — needs the same guarded
+    Windows-only import `secure_journal.py` already has near its top
+    (`try: import win32security, ntsecuritycon as con / except ImportError: win32security = None; con = None`)
+    added to `journal_core.py`, since the Windows ACL branch below depends on it. From `save_json`. This is
     messagebox call site #3 (the Windows-ACL-permission-failure warning). Replace
     `messagebox.showwarning("Warning", f"Failed to set restrictive permissions on Windows: {perm_error}")`
     with: if `warn_callback` is not `None`, call
