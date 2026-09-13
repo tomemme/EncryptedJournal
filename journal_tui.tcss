@@ -184,3 +184,22 @@ Screen {
 #delete-confirm-ok {
     width: 100%;
 }
+
+#delete-confirm-reprompt {
+    height: auto;
+}
+
+#delete-confirm-reprompt-message {
+    color: $warning;
+    width: 100%;
+    content-align: center middle;
+    padding-bottom: 1;
+}
+
+#delete-confirm-reprompt-password {
+    margin-bottom: 1;
+}
+
+#delete-confirm-reprompt-submit {
+    width: 100%;
+}

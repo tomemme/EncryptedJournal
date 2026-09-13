@@ -33,6 +33,9 @@ logger = logging.getLogger("journal_tui")
 
 MAX_FAILED_ATTEMPTS = 5  # matches SecureJournalApp.max_attempts in secure_journal.py
 
+DEFAULT_LOCK_SECONDS = 300  # 5 minutes, overridable via ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS
+SESSION_LOCK_CHECK_INTERVAL = 0.25  # seconds between inactivity-timer checks
+
 
 class EntryViewScreen(Screen):
     """Create/view/edit a single journal entry.
@@ -59,6 +62,10 @@ class EntryViewScreen(Screen):
         self.mode = mode
         self.date = date
         self._encrypted_entry_text: str | None = None
+        # What the password re-prompt is resuming once a valid password is
+        # re-entered: "view" (decrypt-and-populate) or "save" (encrypt-and-
+        # write). Set right before _show_password_reprompt() is called.
+        self._reprompt_mode: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -111,9 +118,15 @@ class EntryViewScreen(Screen):
                 self._encrypted_entry_text, self.app.password
             )
         except ValueError:
+            # Covers both a stale/wrong password and no password currently
+            # held at all (a session-lock timer expiry) - decrypt_message
+            # wraps every failure, including deriving from a None password,
+            # into ValueError, so both cases land here identically.
+            self._reprompt_mode = "view"
             self._show_password_reprompt(
-                "Could not decrypt this entry with the current password. "
-                "Enter the correct password to continue."
+                "Could not decrypt this entry with the current password "
+                "(it may be stale, or the session may have locked). Enter "
+                "your password to continue."
             )
             return
         self.query_one("#entryview-body", TextArea).text = plaintext
@@ -143,23 +156,42 @@ class EntryViewScreen(Screen):
 
     def _retry_password(self, typed_password: str) -> None:
         candidate = bytearray(typed_password, "utf-8")
-        try:
-            plaintext = journal_core.decrypt_message(
-                self._encrypted_entry_text, candidate
-            )
-        except ValueError:
-            for i in range(len(candidate)):
-                candidate[i] = 0
-            self.query_one("#entryview-reprompt-message", Label).update(
-                "Incorrect password. Try again."
-            )
-            self.query_one("#entryview-reprompt-password", Input).value = ""
-            return
-        # Correct password: adopt it as the app's current session password.
+        is_save_resume = self._reprompt_mode == "save"
+
+        if is_save_resume:
+            # No specific ciphertext to validate against for a brand-new
+            # entry - fall back to the same "first entry" check UnlockScreen
+            # uses, and skip validation entirely on an empty/new journal.
+            data = journal_core.load_json(self.app.journal_path, logger=logger)
+            reference_ciphertext = data[0].get("entry", "") if data else None
+        else:
+            reference_ciphertext = self._encrypted_entry_text
+
+        plaintext = None
+        if reference_ciphertext:
+            try:
+                plaintext = journal_core.decrypt_message(
+                    reference_ciphertext, candidate
+                )
+            except ValueError:
+                for i in range(len(candidate)):
+                    candidate[i] = 0
+                self.query_one("#entryview-reprompt-message", Label).update(
+                    "Incorrect password. Try again."
+                )
+                self.query_one("#entryview-reprompt-password", Input).value = ""
+                return
+
+        # Correct password (or nothing on disk yet to validate against):
+        # adopt it as the app's current session password.
         self.app._wipe_password()
         self.app.password = candidate
-        self.query_one("#entryview-body", TextArea).text = plaintext
         self._show_editor()
+
+        if is_save_resume:
+            self._do_save()
+        elif plaintext is not None:
+            self.query_one("#entryview-body", TextArea).text = plaintext
 
     # -- save / cancel --------------------------------------------------
 
@@ -185,6 +217,32 @@ class EntryViewScreen(Screen):
             except ValueError:
                 self._set_message("Invalid date format. Use YYYY-MM-DD")
                 return
+
+        self.app.record_action()
+
+        if self.app.password is None:
+            # Session lock fired mid-edit: the typed body/date above are
+            # untouched (still sitting in their widgets) - re-prompt in
+            # place and resume the save once a password is re-entered,
+            # rather than losing the edit or crashing on a None password.
+            self._reprompt_mode = "save"
+            self._show_password_reprompt(
+                "Session locked. Enter your password to continue saving."
+            )
+            return
+
+        self._do_save(date_str, journal_entry)
+
+    def _do_save(
+        self, date_str: str | None = None, journal_entry: str | None = None
+    ) -> None:
+        if date_str is None or journal_entry is None:
+            body_area = self.query_one("#entryview-body", TextArea)
+            date_input = self.query_one("#entryview-date-input", Input)
+            journal_entry = body_area.text.strip()
+            date_str = date_input.value.strip() or datetime.now().strftime(
+                "%Y-%m-%d"
+            )
 
         try:
             encrypted_entry = journal_core.encrypt_message(
@@ -230,14 +288,14 @@ class DeleteConfirmScreen(ModalScreen[bool]):
 
     Mirrors SecureJournalApp.delete_journal_entry's decrypt-then-confirm
     order: the entry is decrypted with the app's current in-memory
-    password BEFORE the Yes/No prompt is shown. If that decryption fails,
-    the Yes/No prompt is never shown - only an inline error with a way to
-    dismiss, so a password already known to be wrong never reaches the
-    confirmation step.
+    password BEFORE the Yes/No prompt is shown. If that decryption fails -
+    a stale/wrong password, or no password currently held at all because a
+    session-lock timer expired - an in-place password re-prompt is shown
+    instead (same pattern as EntryViewScreen's), and the Yes/No prompt
+    resumes once a valid password is re-entered.
 
     Dismisses with True only if the entry was actually deleted from disk;
-    False for No, Escape, a missing entry, a decrypt failure, or a save
-    failure.
+    False for No, Escape, a missing entry, or a save failure.
     """
 
     BINDINGS = [
@@ -247,6 +305,7 @@ class DeleteConfirmScreen(ModalScreen[bool]):
     def __init__(self, *, date: str, **kwargs) -> None:
         super().__init__(**kwargs)
         self.date = date
+        self._encrypted_entry_text: str | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="delete-confirm-dialog"):
@@ -261,6 +320,16 @@ class DeleteConfirmScreen(ModalScreen[bool]):
             with Vertical(id="delete-confirm-error", classes="hidden"):
                 yield Label("", id="delete-confirm-error-message")
                 yield Button("OK", id="delete-confirm-ok", variant="primary")
+            with Vertical(id="delete-confirm-reprompt", classes="hidden"):
+                yield Label("", id="delete-confirm-reprompt-message")
+                yield Input(
+                    placeholder="Password",
+                    password=True,
+                    id="delete-confirm-reprompt-password",
+                )
+                yield Button(
+                    "Retry", id="delete-confirm-reprompt-submit", variant="primary"
+                )
 
     def on_mount(self) -> None:
         data = journal_core.load_json(self.app.journal_path, logger=logger)
@@ -270,12 +339,22 @@ class DeleteConfirmScreen(ModalScreen[bool]):
             self._show_error(f"No entry found for {self.date}.")
             return
 
+        self._encrypted_entry_text = entry.get("entry", "")
+        self._try_decrypt_and_confirm()
+
+    def _try_decrypt_and_confirm(self) -> None:
         try:
-            journal_core.decrypt_message(entry.get("entry", ""), self.app.password)
+            journal_core.decrypt_message(
+                self._encrypted_entry_text, self.app.password
+            )
         except ValueError:
-            self._show_error(
-                "Could not decrypt this entry with the current password. "
-                "Delete cancelled."
+            # Covers both a stale/wrong password and no password currently
+            # held (session-lock expiry) - decrypt_message wraps both into
+            # ValueError identically.
+            self._show_password_reprompt(
+                "Could not decrypt this entry with the current password "
+                "(it may be stale, or the session may have locked). Enter "
+                "your password to continue with deletion."
             )
             return
 
@@ -283,15 +362,55 @@ class DeleteConfirmScreen(ModalScreen[bool]):
 
     def _show_error(self, message: str) -> None:
         self.query_one("#delete-confirm-prompt", Vertical).add_class("hidden")
+        self.query_one("#delete-confirm-reprompt", Vertical).add_class("hidden")
         self.query_one("#delete-confirm-error", Vertical).remove_class("hidden")
         self.query_one("#delete-confirm-error-message", Label).update(message)
         self.query_one("#delete-confirm-ok", Button).focus()
+
+    def _show_password_reprompt(self, message: str) -> None:
+        self.query_one("#delete-confirm-prompt", Vertical).add_class("hidden")
+        self.query_one("#delete-confirm-error", Vertical).add_class("hidden")
+        self.query_one("#delete-confirm-reprompt", Vertical).remove_class("hidden")
+        self.query_one("#delete-confirm-reprompt-message", Label).update(message)
+        password_input = self.query_one("#delete-confirm-reprompt-password", Input)
+        password_input.value = ""
+        password_input.focus()
+
+    def _show_prompt(self) -> None:
+        self.query_one("#delete-confirm-reprompt", Vertical).add_class("hidden")
+        self.query_one("#delete-confirm-prompt", Vertical).remove_class("hidden")
+        self.query_one("#delete-confirm-yes", Button).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "delete-confirm-reprompt-password":
+            self._retry_password(event.input.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "delete-confirm-yes":
             self._do_delete()
         elif event.button.id in ("delete-confirm-no", "delete-confirm-ok"):
             self.dismiss(False)
+        elif event.button.id == "delete-confirm-reprompt-submit":
+            self._retry_password(
+                self.query_one("#delete-confirm-reprompt-password", Input).value
+            )
+
+    def _retry_password(self, typed_password: str) -> None:
+        candidate = bytearray(typed_password, "utf-8")
+        try:
+            journal_core.decrypt_message(self._encrypted_entry_text, candidate)
+        except ValueError:
+            for i in range(len(candidate)):
+                candidate[i] = 0
+            self.query_one("#delete-confirm-reprompt-message", Label).update(
+                "Incorrect password. Try again."
+            )
+            self.query_one("#delete-confirm-reprompt-password", Input).value = ""
+            return
+        # Correct password: adopt it as the app's current session password.
+        self.app._wipe_password()
+        self.app.password = candidate
+        self._show_prompt()
 
     def action_cancel(self) -> None:
         self.dismiss(False)
@@ -396,6 +515,7 @@ class EntryListScreen(Screen):
         self._view_node(event.node)
 
     def _view_node(self, node) -> None:
+        self.app.record_action()
         if node is None or node.data is None:
             return
         kind = node.data.get("kind")
@@ -410,6 +530,7 @@ class EntryListScreen(Screen):
         self.app.push_screen(EntryViewScreen(mode="view", date=node.data["date"]))
 
     def action_delete_entry(self) -> None:
+        self.app.record_action()
         node = self.query_one("#entrylist-tree", Tree).cursor_node
         if node is None or node.data is None:
             return
@@ -431,9 +552,8 @@ class EntryListScreen(Screen):
             self._set_message("Entry deleted.")
 
     def action_lock(self) -> None:
-        # TODO(Task 8): replace with the full timer-based session lock.
-        self.app._wipe_password()
-        self.app.push_screen(UnlockScreen())
+        # Manual, on-demand lock - independent of the inactivity timer.
+        self.app.lock_now()
 
     def action_quit_app(self) -> None:
         self.app.exit()
@@ -546,11 +666,28 @@ class UnlockScreen(Screen):
         password_input.value = ""
         typed_password = None  # drop our only other reference to the str
 
-        self.app.push_screen(EntryListScreen())
+        self.app.record_action()
+
+        # switch_screen (not push_screen): this UnlockScreen may itself be
+        # the result of a previous lock_now()/switch_screen, so pushing
+        # here would grow the screen stack by one every lock/unlock cycle.
+        # Replacing the current top keeps the stack depth constant.
+        self.app.switch_screen(EntryListScreen())
 
 
 class JournalApp(App):
-    """App shell for the Encrypted Journal TUI."""
+    """App shell for the Encrypted Journal TUI.
+
+    Owns the in-memory session password and the inactivity-based session
+    lock: a `set_interval` timer compares elapsed time since
+    `last_action_time` against `lock_seconds` and wipes the password on
+    expiry. Expiry only wipes the password - it never navigates screens,
+    so whichever screen the user is on (including a mid-edit
+    EntryViewScreen) keeps working; the next action that needs the
+    password re-prompts for it in place. The manual `l` key
+    (EntryListScreen.action_lock -> lock_now()) is the only path that
+    actually returns the user to UnlockScreen.
+    """
 
     CSS_PATH = "journal_tui.tcss"
     TITLE = "Encrypted Journal"
@@ -562,6 +699,13 @@ class JournalApp(App):
 
         # In-memory password: only ever a bytearray, never a persisted str.
         self.password: bytearray | None = None
+
+        # Session lock: threshold (seconds of inactivity before the
+        # password is auto-wiped) and the clock it's measured against.
+        self.lock_seconds = journal_core.env_int(
+            "ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS", DEFAULT_LOCK_SECONDS
+        )
+        self.last_action_time = datetime.now()
 
         self.keyring_service = "encrypted-journal"
         self.keyring_username = os.environ.get(
@@ -578,6 +722,30 @@ class JournalApp(App):
 
     def on_mount(self) -> None:
         self.push_screen(UnlockScreen())
+        self.set_interval(SESSION_LOCK_CHECK_INTERVAL, self._check_session_lock)
+
+    def record_action(self) -> None:
+        """Reset the inactivity clock. Screens call this from any action
+        that counts as user activity (viewing, saving, deleting an entry)
+        rather than reaching into `last_action_time` directly."""
+        self.last_action_time = datetime.now()
+
+    def _check_session_lock(self) -> None:
+        if self.password is None:
+            return  # already locked - nothing to do (idempotent-safe)
+        elapsed = (datetime.now() - self.last_action_time).total_seconds()
+        if elapsed >= self.lock_seconds:
+            self._wipe_password()
+
+    def lock_now(self) -> None:
+        """Manual, on-demand lock (the `l` key): wipe the password and
+        return to UnlockScreen, independent of the inactivity timer.
+
+        Uses switch_screen rather than push_screen so repeated lock/unlock
+        cycles don't grow the screen stack unboundedly.
+        """
+        self._wipe_password()
+        self.switch_screen(UnlockScreen())
 
     def on_unmount(self) -> None:
         self._wipe_password()

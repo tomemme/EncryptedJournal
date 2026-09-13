@@ -111,6 +111,18 @@ def env_bool(name, default=False):
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name, default=0):
+    """Parse an environment variable as an int, falling back to `default`
+    if it's unset or not a valid integer."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        return default
+
+
 def default_xdg_journal_path():
     """Get the default XDG Data Home path for the journal."""
     xdg_data_home = os.environ.get(
