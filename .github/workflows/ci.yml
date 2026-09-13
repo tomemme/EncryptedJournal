@@ -33,7 +33,11 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          python -m py_compile secure_journal.py scripts/smoke_test.py
+          python -m py_compile secure_journal.py scripts/smoke_test.py journal_core.py scripts/core_smoke_test.py
+
+      - name: Core smoke test (headless)
+        run: |
+          python scripts/core_smoke_test.py
 
       - name: Smoke test (Tkinter under Xvfb)
         run: |
