@@ -51,6 +51,28 @@ Environment overrides:
 - `ENCRYPTED_JOURNAL_USE_KEYRING=1` to enable optional system keyring integration for remembered passwords.
 - `ENCRYPTED_JOURNAL_KEYRING_USER=<name>` to customize the keyring account key.
 
+# Textual TUI
+A terminal-first alternative frontend, `journal_tui.py`, built with [Textual](https://textual.textualize.io/). It coexists with the Tkinter GUI (`secure_journal.py`) rather than replacing it, and shares the same journal file, on-disk format, and encryption via `journal_core.py` — entries created in one frontend show up in the other. It respects the same `ENCRYPTED_JOURNAL_FILE`, `ENCRYPTED_JOURNAL_USE_KEYRING`, and `ENCRYPTED_JOURNAL_KEYRING_USER` env vars described above.
+
+Install the extra dependency, then launch it:
+```bash
+pip install -r requirements-tui.txt
+python journal_tui.py
+```
+
+Key bindings:
+- `n` — new entry
+- `v` / `enter` — view/edit the selected entry
+- `d` — delete the selected entry (with a Yes/No confirmation)
+- `l` — lock now (clears the in-memory password, returns to the unlock screen)
+- `q` — quit
+- `ctrl+s` — save an entry
+- `escape` — cancel/discard and return to the entry list
+
+Session lock: `ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS` (default `300`, i.e. 5 minutes) sets an inactivity auto-lock. After that many seconds without a tracked action, the in-memory password is cleared; the next action that needs decryption re-prompts for the password in place, without discarding unsaved edits. The `l` key triggers the same lock manually, independent of the timer.
+
+Password rotation and spell checking are GUI-only for now; the TUI doesn't implement either yet.
+
 # Arch / Omarchy Packaging
 This repo includes Arch packaging files at `packaging/arch/` so the app can be published to AUR and discovered from Omarchy package search tools.
 

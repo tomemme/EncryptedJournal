@@ -30,6 +30,19 @@ Legend:
 - [ ] Add optional password cache duration setting.
 - [ ] Add a manual `Lock now` action.
 
+Note: the Textual TUI (`journal_tui.py`, TUI_PLAN Tasks 5 & 8) now has both inactivity
+auto-lock (`ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS`, default 300s) and a manual `l` lock-now
+action. The Tkinter GUI (`secure_journal.py`) still does not implement either, so the
+`[ ]` items above remain accurate for the GUI.
+
+## TUI (v1) — Explicitly Deferred
+Deferred scope from the TUI effort (see `docs/TUI_PLAN.md` "Explicitly out of scope this
+round"); none of this applies to the GUI, which is unaffected by the TUI plan.
+- [ ] Add password rotation to the TUI.
+- [ ] Add spellcheck to the TUI.
+- [ ] Add Omarchy `colors.toml` theme integration for the TUI.
+- [ ] Add `omarchy-tui-install` / `.desktop` launcher packaging for the TUI.
+
 ## 6) Secure Storage Options
 - [x] Add optional Linux keyring integration.
 - [x] Move default storage to XDG paths (`~/.local/share/...`).
