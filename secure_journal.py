@@ -22,11 +22,12 @@ except ImportError:
 import re
 import string
 import secrets
-import gc
 import tempfile
 import logging
 from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
+import journal_core
+from journal_core import secure_password
 
 # Windows-specific imports for file permissions
 try:
@@ -35,30 +36,6 @@ try:
 except ImportError:
     win32security = None
     con = None
-
-
-@contextmanager
-def secure_password(password):
-    """Provide a mutable buffer for a password and wipe it afterwards."""
-
-    secret = None
-    try:
-        if isinstance(password, bytearray):
-            secret = password
-        elif isinstance(password, (bytes, memoryview)):
-            secret = bytearray(password)
-        elif isinstance(password, str):
-            secret = bytearray(password, "utf-8")
-        else:
-            raise TypeError("Password must be bytes-like or str")
-
-        yield secret
-    finally:
-        if secret is not None:
-            for i in range(len(secret)):
-                secret[i] = 0
-        del secret
-        gc.collect()
 
 
 OMARCHY_THEME_PATH = os.path.expanduser("~/.config/omarchy/current/theme/alacritty.toml")
@@ -199,60 +176,34 @@ class SecureJournalApp:
         return logger
 
     def _env_bool(self, name, default=False):
-        value = os.environ.get(name)
-        if value is None:
-            return default
-        return value.strip().lower() in {"1", "true", "yes", "on"}
+        return journal_core.env_bool(name, default)
 
     def _default_xdg_journal_path(self):
-        xdg_data_home = os.environ.get(
-            "XDG_DATA_HOME", os.path.expanduser("~/.local/share")
-        )
-        return os.path.join(
-            os.path.expanduser(xdg_data_home), "encrypted-journal", "journal.json.gz"
-        )
+        return journal_core.default_xdg_journal_path()
 
     def _legacy_journal_path(self):
-        return self.resource_path("journal.json.gz")
+        return journal_core.legacy_journal_path()
 
     def _resolve_journal_path(self):
-        custom_path = os.environ.get("ENCRYPTED_JOURNAL_FILE")
-        if custom_path:
-            return os.path.abspath(os.path.expanduser(custom_path))
-
-        default_path = self._default_xdg_journal_path()
-        legacy_path = self._legacy_journal_path()
-
-        if os.path.exists(default_path):
-            return default_path
-        if os.path.exists(legacy_path):
-            return legacy_path
-        return default_path
+        return journal_core.resolve_journal_path()
 
     def _keyring_get_password(self):
-        if not self.keyring_available:
-            return None
-        try:
-            return keyring.get_password(self.keyring_service, self.keyring_username)
-        except Exception as error:
-            self.logger.warning("Keyring read failed: %s", error)
-            return None
+        return journal_core.keyring_get_password(
+            self.keyring_service, self.keyring_username,
+            available=self.keyring_available, logger=self.logger,
+        )
 
     def _keyring_set_password(self, password):
-        if not self.keyring_available or not password:
-            return
-        try:
-            keyring.set_password(self.keyring_service, self.keyring_username, password)
-        except Exception as error:
-            self.logger.warning("Keyring write failed: %s", error)
+        journal_core.keyring_set_password(
+            self.keyring_service, self.keyring_username, password,
+            available=self.keyring_available, logger=self.logger,
+        )
 
     def _keyring_clear_password(self):
-        if not self.keyring_available:
-            return
-        try:
-            keyring.delete_password(self.keyring_service, self.keyring_username)
-        except Exception:
-            pass
+        journal_core.keyring_clear_password(
+            self.keyring_service, self.keyring_username,
+            available=self.keyring_available, logger=self.logger,
+        )
 
     def _init_spellchecker(self):
         if enchant is None:
@@ -1347,40 +1298,10 @@ class SecureJournalApp:
                 self.logger.warning("Icon not applied: %s", e)
 
     def days_since_last_entry(self):
-        data = self.load_json()
-        if not data:
-            return "No entries found."
-
-        dates = []
-        for entry in data:
-            date_str = entry.get("date")
-            if date_str:
-                try:
-                    date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                    dates.append(date)
-                except ValueError:
-                    pass
-
-        if not dates:
-            return "No valid entries found."
-
-        most_recent_date = max(dates)
-        current_date = self._current_date()
-        days_since = (current_date - most_recent_date).days
-
-        if days_since == 0:
-            return "You have made an entry today."
-        elif days_since == 1:
-            return "It has been 1 day since your last entry."
-        else:
-            return f"It has been {days_since} days since your last entry."
+        return journal_core.days_since_last_entry(self.load_json())
 
     def resource_path(self, relative_path):
-        try:
-            base_path = sys._MEIPASS  # PyInstaller
-        except Exception:
-            base_path = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(base_path, relative_path)
+        return journal_core.resource_path(relative_path)
 
     def apply_theme(self):
         try:
@@ -1708,42 +1629,21 @@ class SecureJournalApp:
                 pass
 
     def derive_key(self, password, salt):
-        kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
-        if isinstance(password, memoryview):
-            password_bytes = password.tobytes()
-        elif isinstance(password, (bytes, bytearray)):
-            password_bytes = password
-        elif isinstance(password, str):
-            password_bytes = password.encode()
-        else:
-            raise TypeError("Password must be bytes-like or str")
-
-        return kdf.derive(password_bytes)
+        return journal_core.derive_key(password, salt)
 
     def encrypt_message(self, message, password):
-        salt = secrets.token_bytes(16)
         try:
-            key = self.derive_key(password, salt)
+            return journal_core.encrypt_message(message, password)
         except Exception:
             messagebox.showerror("Error", "Incorrect password.")
             return None
-        aesgcm = AESGCM(key)
-        nonce = secrets.token_bytes(12)
-        ciphertext = aesgcm.encrypt(nonce, message.encode(), None)
-        return base64.urlsafe_b64encode(salt + nonce + ciphertext).decode("utf-8")
 
     def decrypt_message(self, encrypted_message, password, count_attempt=True):
         try:
-            encrypted_data = base64.urlsafe_b64decode(encrypted_message)
-            salt = encrypted_data[:16]
-            nonce = encrypted_data[16:28]
-            ciphertext = encrypted_data[28:]
-            key = self.derive_key(password, salt)
-            aesgcm = AESGCM(key)
-            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            plaintext = journal_core.decrypt_message(encrypted_message, password)
             if count_attempt:
                 self.failed_attempts = 0
-            return plaintext.decode("utf-8")
+            return plaintext
         except Exception:
             if count_attempt:
                 self.failed_attempts += 1
@@ -2079,143 +1979,31 @@ class SecureJournalApp:
         return log_path
 
     def _ensure_parent_dir(self):
-        parent = os.path.dirname(self.filename)
-        if parent and not os.path.exists(parent):
-            os.makedirs(parent, exist_ok=True)
+        journal_core.ensure_parent_dir(self.filename)
 
     def _is_valid_date_string(self, value):
-        if not isinstance(value, str):
-            return False
-        try:
-            datetime.strptime(value, "%Y-%m-%d")
-            return True
-        except ValueError:
-            return False
+        return journal_core.is_valid_date_string(value)
 
     def _sanitize_journal_data(self, data):
-        sanitized = []
-        skipped = 0
-        for item in data:
-            if not isinstance(item, dict):
-                skipped += 1
-                continue
+        return journal_core.sanitize_journal_data(data, filename=self.filename, logger=self.logger)
 
-            date_value = item.get("date")
-            entry_value = item.get("entry")
-            if not self._is_valid_date_string(date_value) or not isinstance(
-                entry_value, str
-            ):
-                skipped += 1
-                continue
-
-            sanitized.append(item)
-
-        if skipped:
-            self.logger.warning(
-                f"Skipped {skipped} invalid journal record(s) while loading "
-                f"'{self.filename}'."
-            )
-        return sanitized
- 
     def save_json(self, data):
-        temp_path = None
-        try:
-            self._ensure_parent_dir()
-
-            parent_dir = os.path.dirname(self.filename) or "."
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                delete=False,
-                dir=parent_dir,
-                prefix=".journal_tmp_",
-                suffix=".gz",
-            ) as tmp_file:
-                temp_path = tmp_file.name
-
-            with gzip.open(temp_path, "wt", encoding="utf-8") as file:
-                json.dump(data, file, indent=4)
-
-            if os.name != "nt":
-                os.chmod(temp_path, 0o600)  # lock down temp file on Unix
-
-            os.replace(temp_path, self.filename)
-            temp_path = None
-
-            if os.name == "nt" and win32security:
-                try:
-                    user, domain, type = win32security.LookupAccountName(
-                        "", os.getlogin()
-                    )
-                    sd = win32security.GetFileSecurity(
-                        self.filename, win32security.DACL_SECURITY_INFORMATION
-                    )
-                    dacl = win32security.ACL()
-                    dacl.AddAccessAllowedAce(
-                        win32security.ACL_REVISION,
-                        con.FILE_GENERIC_READ | con.FILE_GENERIC_WRITE,
-                        user,
-                    )
-                    sd.SetSecurityDescriptorDacl(1, dacl, 0)
-                    win32security.SetFileSecurity(
-                        self.filename, win32security.DACL_SECURITY_INFORMATION, sd
-                    )
-                except Exception as perm_error:
-                    messagebox.showwarning(
-                        "Warning",
-                        f"Failed to set restrictive permissions on Windows: {perm_error}",
-                    )
-            else:
-                os.chmod(self.filename, 0o600)  # lock down on Unix
-
-        except PermissionError as e:
-            raise PermissionError(
-                f"Permission denied when accessing {self.filename}: {e}"
-            )
-        except Exception as e:
-            raise Exception(f"Failed to save JSON data: {e}")
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
+        journal_core.save_json(
+            self.filename, data, logger=self.logger,
+            warn_callback=lambda msg: messagebox.showwarning("Warning", msg),
+        )
 
     def _load_json_from_path(self, path, show_warnings=True):
-        if not os.path.exists(path):
-            return []
-
-        try:
-            with gzip.open(path, "rt", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            if show_warnings:
-                messagebox.showwarning(
-                    "Warning",
-                    "The journal file appears to be corrupted or unreadable. "
-                    "It will be ignored until it is replaced with a valid backup.",
-                )
-            self.logger.warning("Failed to read journal file '%s': %s", path, e)
-            return None
-
-        if isinstance(data, list):
-            return self._sanitize_journal_data(data)
-
-        if show_warnings:
-            messagebox.showwarning(
-                "Warning",
-                "The journal file contains unexpected data and will be ignored.",
-            )
-        self.logger.warning(
-            "Unexpected journal file contents. Expected a list of entries, got %s.",
-            type(data).__name__,
+        return journal_core.load_json_from_path(
+            path, show_warnings=show_warnings, logger=self.logger,
+            warn_callback=lambda msg: messagebox.showwarning("Warning", msg),
         )
-        return None
 
     def load_json(self):
-        data = self._load_json_from_path(self.filename)
-        if data is None:
-            return []
-        return data
+        return journal_core.load_json(
+            self.filename, logger=self.logger,
+            warn_callback=lambda msg: messagebox.showwarning("Warning", msg),
+        )
 
     def save_journal_entry(self):
         self.last_action_time = datetime.now()
