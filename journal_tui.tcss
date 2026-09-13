@@ -149,3 +149,38 @@ Screen {
 #entryview-reprompt-submit {
     width: 100%;
 }
+
+#delete-confirm-dialog {
+    width: 60;
+    height: auto;
+    padding: 1 2;
+    border: round $warning;
+    background: $panel;
+}
+
+#delete-confirm-message {
+    width: 100%;
+    content-align: center middle;
+    padding-bottom: 1;
+}
+
+#delete-confirm-buttons {
+    height: auto;
+    align: center middle;
+}
+
+#delete-confirm-buttons Button {
+    margin: 0 1;
+    min-width: 10;
+}
+
+#delete-confirm-error-message {
+    color: $error;
+    width: 100%;
+    content-align: center middle;
+    padding-bottom: 1;
+}
+
+#delete-confirm-ok {
+    width: 100%;
+}

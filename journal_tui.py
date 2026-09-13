@@ -14,8 +14,8 @@ from datetime import datetime
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
-from textual.screen import Screen
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
     Checkbox,
@@ -222,6 +222,91 @@ class EntryViewScreen(Screen):
             list_screen._set_message(message)
 
 
+class DeleteConfirmScreen(ModalScreen[bool]):
+    """Yes/No confirmation modal for deleting a single dated journal entry.
+
+    Reachable only for a "date" leaf - EntryListScreen.action_delete_entry
+    guards month/root nodes before ever constructing this screen.
+
+    Mirrors SecureJournalApp.delete_journal_entry's decrypt-then-confirm
+    order: the entry is decrypted with the app's current in-memory
+    password BEFORE the Yes/No prompt is shown. If that decryption fails,
+    the Yes/No prompt is never shown - only an inline error with a way to
+    dismiss, so a password already known to be wrong never reaches the
+    confirmation step.
+
+    Dismisses with True only if the entry was actually deleted from disk;
+    False for No, Escape, a missing entry, a decrypt failure, or a save
+    failure.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, *, date: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.date = date
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="delete-confirm-dialog"):
+            with Vertical(id="delete-confirm-prompt"):
+                yield Label(
+                    f"Delete entry for {self.date}? This cannot be undone.",
+                    id="delete-confirm-message",
+                )
+                with Horizontal(id="delete-confirm-buttons"):
+                    yield Button("Yes", id="delete-confirm-yes", variant="error")
+                    yield Button("No", id="delete-confirm-no", variant="primary")
+            with Vertical(id="delete-confirm-error", classes="hidden"):
+                yield Label("", id="delete-confirm-error-message")
+                yield Button("OK", id="delete-confirm-ok", variant="primary")
+
+    def on_mount(self) -> None:
+        data = journal_core.load_json(self.app.journal_path, logger=logger)
+        entry = next((e for e in data if e.get("date") == self.date), None)
+
+        if entry is None:
+            self._show_error(f"No entry found for {self.date}.")
+            return
+
+        try:
+            journal_core.decrypt_message(entry.get("entry", ""), self.app.password)
+        except ValueError:
+            self._show_error(
+                "Could not decrypt this entry with the current password. "
+                "Delete cancelled."
+            )
+            return
+
+        self.query_one("#delete-confirm-yes", Button).focus()
+
+    def _show_error(self, message: str) -> None:
+        self.query_one("#delete-confirm-prompt", Vertical).add_class("hidden")
+        self.query_one("#delete-confirm-error", Vertical).remove_class("hidden")
+        self.query_one("#delete-confirm-error-message", Label).update(message)
+        self.query_one("#delete-confirm-ok", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "delete-confirm-yes":
+            self._do_delete()
+        elif event.button.id in ("delete-confirm-no", "delete-confirm-ok"):
+            self.dismiss(False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+    def _do_delete(self) -> None:
+        data = journal_core.load_json(self.app.journal_path, logger=logger)
+        new_data = [entry for entry in data if entry.get("date") != self.date]
+        try:
+            journal_core.save_json(self.app.journal_path, new_data, logger=logger)
+        except Exception as error:
+            self._show_error(f"Failed to delete entry: {error}")
+            return
+        self.dismiss(True)
+
+
 class EntryListScreen(Screen):
     """Main navigation screen: a Tree of journal entries grouped by
     Year-Month, shown after a successful unlock.
@@ -334,11 +419,16 @@ class EntryListScreen(Screen):
             return
         if kind != "date":
             return
-        # TODO(Task 7): replace with the real delete-confirmation modal.
-        self._set_message(
-            f"Delete requested for {node.data['date']} "
-            "(confirmation dialog arrives in Task 7)."
+        self._set_message("")
+        self.app.push_screen(
+            DeleteConfirmScreen(date=node.data["date"]),
+            self._handle_delete_result,
         )
+
+    def _handle_delete_result(self, deleted: bool) -> None:
+        if deleted:
+            self.refresh_entries()
+            self._set_message("Entry deleted.")
 
     def action_lock(self) -> None:
         # TODO(Task 8): replace with the full timer-based session lock.
