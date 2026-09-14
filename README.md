@@ -7,14 +7,14 @@ A cross-platform encrypted journal application built with Python and the `crypto
 - **Delete Entries**: Remove specific entries with a Yes/No confirmation.
 - **Overwrite Guard**: creating/saving an entry for a date that already has one (e.g. pressing `n` in the TUI, or saving a blank editor in the GUI without explicitly loading first) opens the existing entry for editing instead of silently overwriting it — clear it (`ctrl+r` in the TUI, the Clear button in the GUI) if you want to start blank.
 - **Session Security**: Inactivity auto-lock (`ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS`, default 5 minutes, TUI only) plus a manual lock-now key, with secure password cleanup from memory.
-- **Backups + Restore** (GUI, via Settings): timestamped backups (`journal.json.gz.bak-<timestamp>`) are created automatically before a password rotation or restore, and on demand; the newest 10 are kept. Restore lets you pick a backup file and safety-backs-up the current journal first.
+- **Backups + Restore** (both frontends, via Settings): timestamped backups (`journal.json.gz.bak-<timestamp>`) are created automatically before a password rotation or restore, and on demand; the newest 10 are kept. Restore safety-backs-up the current journal first, then loads the backup you pick. The GUI picks a file via a native dialog; the TUI's restore screen (`s`) also accepts any path typed/pasted in — not just backups already sitting beside the journal file — so a backup living anywhere on disk can be restored directly with no manual copying first.
 - **Password Rotation** (GUI, via Settings): re-encrypts every entry under a new password, aborting without writing anything if more than 10% of entries fail to re-encrypt.
 - **Rotating-File Logging**: both frontends log to `<journal directory>/encrypted-journal.log` (512KB, 5 backups kept), overridable via `ENCRYPTED_JOURNAL_LOG_FILE`/`ENCRYPTED_JOURNAL_LOG_LEVEL`.
 - **Cross-Platform**: Works on Windows, macOS, and Linux with consistent file handling and permissions.
 - **Days Since Last Entry**: Displays the time since your last journal entry.
 - **Omarchy Theming**: On Omarchy, both frontends automatically match your current desktop theme's colors (the TUI polls every ~1s for live updates; the GUI checks every ~5s). Falls back to each frontend's own default theme when Omarchy isn't present.
 
-The TUI does not yet have its own screens for backup/restore/password rotation — that logic lives in `journal_core.py` today for the GUI to use, ready for the TUI to build on next (see `TODO_PROD_READY.md`).
+The TUI does not yet have its own screen for password rotation — that logic lives in `journal_core.py` today for the GUI to use, ready for the TUI to build on next (see `TODO_PROD_READY.md`).
 
 # Requirements
 - Python 3.11+
@@ -46,6 +46,7 @@ python secure_journal.py    # desktop GUI
 - `n` — new entry
 - `v` / `enter` — view/edit the selected entry
 - `d` — delete the selected entry (with a Yes/No confirmation)
+- `s` — open Settings (create a backup, or restore from one)
 - `l` — lock now (clears the in-memory password, returns to the unlock screen)
 - `q` — quit
 - `ctrl+s` — save an entry
@@ -53,6 +54,8 @@ python secure_journal.py    # desktop GUI
 - `escape` — cancel/discard and return to the entry list
 
 Session lock: `ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS` (default `300`, i.e. 5 minutes) sets an inactivity auto-lock. After that many seconds without a tracked action, the in-memory password is cleared; the next action that needs decryption re-prompts for the password in place, without discarding unsaved edits. The `l` key triggers the same lock manually, independent of the timer.
+
+Settings (`s`): create a backup of the current journal on demand, or restore one — either by picking from the list of backups already sitting beside the journal file, or by typing/pasting the path to a backup located anywhere else on disk. Restoring safety-backs-up the current journal first (same as the GUI); if that safety backup itself fails, you're asked to confirm before restoring anyway.
 
 ## GUI (`secure_journal.py`) key bindings
 - `ctrl/cmd+s` — save, `ctrl/cmd+l` — load selected entry, `ctrl/cmd+d` — delete selected entry, `ctrl/cmd+h` — help

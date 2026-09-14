@@ -22,9 +22,11 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    OptionList,
     TextArea,
     Tree,
 )
+from textual.widgets.option_list import Option
 
 import journal_core
 import omarchy_theme
@@ -460,6 +462,217 @@ class DeleteConfirmScreen(ModalScreen[bool]):
         self.dismiss(True)
 
 
+class SettingsScreen(Screen):
+    """Backup/restore screen, reached from EntryListScreen via 's'.
+
+    Neither action needs the journal password - both operate on the whole
+    encrypted file as opaque bytes, not on individual decrypted entries -
+    so there's no password-reprompt path here (contrast EntryViewScreen /
+    DeleteConfirmScreen).
+
+    Two sections toggled via the "hidden" class (same pattern as
+    EntryViewScreen's editor/reprompt and DeleteConfirmScreen's
+    prompt/error/reprompt), rather than a separate pushed screen for
+    restore:
+    - "main": Create Backup Now / Restore From Backup.
+    - "restore": a list of backups found beside the journal
+      (`journal_core.list_journal_backups`) plus a free-text path Input -
+      restoring works the same way from either, so a backup that lives
+      anywhere on disk (not just beside the journal file) can be restored
+      directly, with no manual copy-into-the-folder step first.
+
+    A third, normally-hidden sub-section under "restore"
+    (#settings-restore-skip-backup) only appears if the pre-restore safety
+    backup of the *current* journal fails - mirrors the GUI's
+    askyesno("...Continue restoring anyway?") fallback instead of either
+    silently skipping the safety backup or blocking the restore entirely.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Back"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Vertical(id="settings-dialog"):
+            yield Label("Settings", id="settings-title")
+            with Vertical(id="settings-main"):
+                yield Button("Create Backup Now", id="settings-backup-btn")
+                yield Button("Restore From Backup", id="settings-restore-btn")
+                yield Label("", id="settings-message")
+            with Vertical(id="settings-restore", classes="hidden"):
+                yield Label("Restore From Backup", id="settings-restore-title")
+                yield Label(
+                    "Existing backups (select to fill in the path below):",
+                    id="settings-restore-list-label",
+                )
+                yield OptionList(id="settings-restore-list")
+                yield Label(
+                    "Or enter/paste any backup file path:",
+                    id="settings-restore-path-label",
+                )
+                yield Input(
+                    placeholder="/path/to/journal.json.gz.bak-...",
+                    id="settings-restore-path-input",
+                )
+                yield Label("", id="settings-restore-message")
+                with Horizontal(id="settings-restore-buttons"):
+                    yield Button(
+                        "Restore", id="settings-restore-submit", variant="primary"
+                    )
+                    yield Button("Back", id="settings-restore-back")
+                with Vertical(
+                    id="settings-restore-skip-backup", classes="hidden"
+                ):
+                    yield Label("", id="settings-restore-skip-message")
+                    with Horizontal(id="settings-restore-skip-buttons"):
+                        yield Button(
+                            "Restore Anyway",
+                            id="settings-restore-skip-confirm",
+                            variant="error",
+                        )
+                        yield Button("Cancel", id="settings-restore-skip-cancel")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.app.record_action()
+        self._pending_restore_path: str | None = None
+        self._pending_restore_data = None
+
+    # -- main section -----------------------------------------------------
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "settings-backup-btn":
+            self._create_backup()
+        elif event.button.id == "settings-restore-btn":
+            self._show_restore_section()
+        elif event.button.id == "settings-restore-submit":
+            self._attempt_restore()
+        elif event.button.id == "settings-restore-back":
+            self._show_main_section()
+        elif event.button.id == "settings-restore-skip-confirm":
+            self._finish_restore(self._pending_restore_path, self._pending_restore_data)
+        elif event.button.id == "settings-restore-skip-cancel":
+            self._hide_skip_backup_section()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "settings-restore-path-input":
+            self._attempt_restore()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "settings-restore-list" and event.option.id:
+            self.query_one(
+                "#settings-restore-path-input", Input
+            ).value = event.option.id
+
+    def _create_backup(self) -> None:
+        self.app.record_action()
+        message = self.query_one("#settings-message", Label)
+        if not os.path.exists(self.app.journal_path):
+            message.update("There is no journal file to back up yet.")
+            return
+        try:
+            backup_path = journal_core.create_journal_backup(self.app.journal_path)
+        except Exception as error:
+            message.update(f"Unable to create a backup: {error}")
+            return
+        message.update(f"Backup created at:\n{backup_path}")
+
+    # -- restore section ----------------------------------------------------
+
+    def _show_restore_section(self) -> None:
+        self.app.record_action()
+        self.query_one("#settings-title", Label).add_class("hidden")
+        self.query_one("#settings-main", Vertical).add_class("hidden")
+        self.query_one("#settings-restore", Vertical).remove_class("hidden")
+        self._hide_skip_backup_section()
+
+        option_list = self.query_one("#settings-restore-list", OptionList)
+        option_list.clear_options()
+        backups = journal_core.list_journal_backups(self.app.journal_path)
+        if backups:
+            option_list.add_options(
+                Option(os.path.basename(path), id=path) for path in backups
+            )
+        else:
+            option_list.add_option(Option("No backups found.", disabled=True))
+
+        path_input = self.query_one("#settings-restore-path-input", Input)
+        path_input.value = ""
+        self.query_one("#settings-restore-message", Label).update("")
+        path_input.focus()
+
+    def _show_main_section(self) -> None:
+        self.query_one("#settings-restore", Vertical).add_class("hidden")
+        self.query_one("#settings-title", Label).remove_class("hidden")
+        self.query_one("#settings-main", Vertical).remove_class("hidden")
+
+    def _hide_skip_backup_section(self) -> None:
+        self.query_one("#settings-restore-skip-backup", Vertical).add_class("hidden")
+        self._pending_restore_path = None
+        self._pending_restore_data = None
+
+    def _attempt_restore(self) -> None:
+        self.app.record_action()
+        path_input = self.query_one("#settings-restore-path-input", Input)
+        message = self.query_one("#settings-restore-message", Label)
+
+        raw_path = path_input.value.strip()
+        if not raw_path:
+            message.update("Enter a backup path or select one from the list above.")
+            return
+        path = os.path.abspath(os.path.expanduser(raw_path))
+
+        try:
+            data = journal_core.validate_backup_file(path)
+        except ValueError as error:
+            message.update(str(error))
+            return
+
+        message.update("")
+
+        if os.path.exists(self.app.journal_path):
+            try:
+                journal_core.create_journal_backup(self.app.journal_path)
+            except Exception as error:
+                self._pending_restore_path = path
+                self._pending_restore_data = data
+                self.query_one(
+                    "#settings-restore-skip-message", Label
+                ).update(
+                    "The current journal could not be backed up before "
+                    f"restoring.\n\nDetails: {error}\n\nContinue anyway?"
+                )
+                self.query_one(
+                    "#settings-restore-skip-backup", Vertical
+                ).remove_class("hidden")
+                return
+
+        self._finish_restore(path, data)
+
+    def _finish_restore(self, path: str, data) -> None:
+        message = self.query_one("#settings-restore-message", Label)
+        try:
+            journal_core.save_json(self.app.journal_path, data, logger=logger)
+        except Exception as error:
+            message.update(f"Unable to restore the selected backup: {error}")
+            return
+
+        self._hide_skip_backup_section()
+        self._return_to_list(f"Journal restored from:\n{path}")
+
+    def action_close(self) -> None:
+        self._return_to_list(None)
+
+    def _return_to_list(self, message: str | None) -> None:
+        self.app.pop_screen()
+        list_screen = self.app.screen
+        if isinstance(list_screen, EntryListScreen):
+            list_screen.refresh_entries()
+            if message is not None:
+                list_screen._set_message(message)
+
+
 class EntryListScreen(Screen):
     """Main navigation screen: a Tree of journal entries grouped by
     Year-Month, shown after a successful unlock.
@@ -469,6 +682,7 @@ class EntryListScreen(Screen):
         Binding("n", "new_entry", "New"),
         Binding("v", "view_entry", "View"),
         Binding("d", "delete_entry", "Delete"),
+        Binding("s", "settings", "Settings"),
         Binding("l", "lock", "Lock"),
         Binding("q", "quit_app", "Quit"),
     ]
@@ -601,6 +815,10 @@ class EntryListScreen(Screen):
         if deleted:
             self.refresh_entries()
             self._set_message("Entry deleted.")
+
+    def action_settings(self) -> None:
+        self.app.record_action()
+        self.app.push_screen(SettingsScreen())
 
     def action_lock(self) -> None:
         # Manual, on-demand lock - independent of the inactivity timer.

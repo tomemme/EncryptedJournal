@@ -505,7 +505,17 @@ def list_journal_backups(journal_path):
 
 def validate_backup_file(path):
     """Load and sanitize a candidate backup file for restore. Raises
-    ValueError if it doesn't parse as valid journal data."""
+    ValueError if the path doesn't exist or doesn't parse as valid journal
+    data.
+
+    Deliberately does not delegate path-existence handling to
+    load_json_from_path: that function treats a missing path as "new empty
+    journal" ([]), which is correct for the main journal file but wrong
+    here - a restore candidate that doesn't exist (e.g. a mistyped path)
+    must fail, not silently "restore" an empty journal.
+    """
+    if not os.path.exists(path):
+        raise ValueError(f"'{path}' is not a valid journal backup file.")
     data = load_json_from_path(path, show_warnings=False)
     if data is None:
         raise ValueError(f"'{path}' is not a valid journal backup file.")

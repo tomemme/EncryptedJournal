@@ -13,7 +13,8 @@ Legend:
 ## 2) Backup Retention + Restore
 - [x] Keep only the last 10 backups (`journal_core.create_journal_backup`, shared).
 - [x] Prune older `journal.json.gz.bak-*` files automatically.
-- [x] Add a restore-from-backup flow in the GUI (Settings dialog). Not yet exposed in the TUI - the underlying `journal_core` logic is ready for it.
+- [x] Add a restore-from-backup flow in the GUI (Settings dialog).
+- [x] Add a backup/restore screen in the TUI (`s` key -> `SettingsScreen`). Restore accepts any path on disk (typed/pasted, not just backups already sitting beside the journal file), validated via `journal_core.validate_backup_file` before anything is overwritten.
 
 ## 3) Logging And Error Handling
 - [x] Replace `print(...)` with structured logging.
@@ -42,7 +43,8 @@ per-session setting.
 Deferred scope from the original TUI effort (see `docs/TUI_PLAN.md` "Explicitly out of
 scope this round"). The Tkinter GUI (`secure_journal.py`) is back in this repo alongside
 the TUI, sharing `journal_core.py`, so most of this is now done for the GUI - the TUI
-itself doesn't have its own screens for these yet.
+now has its own backup/restore screen (see "Backup Retention + Restore" above); password
+rotation is the one still without a TUI screen.
 - [x] Add password rotation (GUI, via Settings; shared logic in `journal_core.rotate_journal_password`). No TUI screen yet.
 - [x] Add spellcheck (GUI only, via `pyenchant`; not applicable to a terminal UI).
 - [x] Add Omarchy `colors.toml` theme integration (both frontends, via shared `journal_core` Omarchy-reading functions).

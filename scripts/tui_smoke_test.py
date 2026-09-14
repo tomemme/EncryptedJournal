@@ -427,6 +427,172 @@ async def _run_overwrite_guard_scenario(temp_dir):
             os.environ.pop("ENCRYPTED_JOURNAL_FILE", None)
 
 
+async def _run_backup_restore_scenario(temp_dir):
+    """Backup + restore via SettingsScreen (Task: TUI backup/restore).
+
+    Specifically exercises restoring from an arbitrary external path (typed
+    into the Input, not selected from the in-folder backup list) - the
+    actual gap this feature closes: a backup living anywhere on disk can be
+    restored directly, with no manual copy into the journal's own folder
+    first.
+
+    Uses its own journal file (like the overwrite-guard scenario) since it
+    needs full control over on-disk state and an isolated backup directory.
+    """
+    import journal_core
+    from journal_tui import EntryListScreen, JournalApp, SettingsScreen, UnlockScreen
+
+    password = "smoke-test-password"
+    entry_date = "2026-06-01"
+    entry_body = "Backup/restore scenario body."
+    journal_path = os.path.join(temp_dir, "backup-restore-journal.json.gz")
+    external_backup_path = os.path.join(temp_dir, "external", "manual-copy.bak")
+
+    original_journal_file = os.environ.get("ENCRYPTED_JOURNAL_FILE")
+    os.environ["ENCRYPTED_JOURNAL_FILE"] = journal_path
+    try:
+        app = JournalApp()
+        async with app.run_test() as pilot:
+            password_input = app.screen.query_one("#password-input")
+            password_input.value = password
+            await pilot.press("enter")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryListScreen),
+                f"Unlock did not reach EntryListScreen, got {type(app.screen).__name__}.",
+            )
+
+            # Seed one entry, then create a backup of it via SettingsScreen.
+            await pilot.press("n")
+            await pilot.pause()
+            app.screen.query_one("#entryview-date-input").value = entry_date
+            app.screen.query_one("#entryview-body").text = entry_body
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+
+            await pilot.press("s")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, SettingsScreen),
+                f"'s' did not open SettingsScreen, got {type(app.screen).__name__}.",
+            )
+            settings_screen = app.screen
+            await pilot.click("#settings-backup-btn")
+            await pilot.pause()
+            backup_message = str(settings_screen.query_one("#settings-message").content)
+            _assert(
+                "Backup created at" in backup_message,
+                f"Expected a backup-created message, got {backup_message!r}.",
+            )
+            backups = journal_core.list_journal_backups(journal_path)
+            _assert(len(backups) == 1, f"Expected exactly one backup, found {backups}.")
+            backup_path = backups[0]
+
+            # Copy that backup out to an external location and delete it
+            # from the journal's own backup folder, so the only way to
+            # restore it is via the arbitrary-path Input, not the in-folder
+            # OptionList.
+            os.makedirs(os.path.dirname(external_backup_path), exist_ok=True)
+            with open(backup_path, "rb") as src, open(external_backup_path, "wb") as dst:
+                dst.write(src.read())
+            os.remove(backup_path)
+            _assert(
+                journal_core.list_journal_backups(journal_path) == [],
+                "Expected no backups left in the journal's own folder.",
+            )
+
+            # Delete the entry so restoring it back is observable.
+            journal_core.save_json(journal_path, [])
+            _assert(
+                journal_core.load_json(journal_path) == [],
+                "Expected the journal to be empty before restore.",
+            )
+
+            await pilot.click("#settings-restore-btn")
+            await pilot.pause()
+            option_list = settings_screen.query_one("#settings-restore-list")
+            _assert(
+                option_list.option_count == 1
+                and str(option_list.get_option_at_index(0).prompt) == "No backups found.",
+                "Expected the in-folder backup list to be empty after the "
+                f"backup was moved out, got option_count={option_list.option_count}.",
+            )
+
+            # First, confirm an invalid path is rejected with an inline
+            # error and does not touch the on-disk journal.
+            path_input = settings_screen.query_one("#settings-restore-path-input")
+            path_input.value = os.path.join(temp_dir, "does-not-exist.bak")
+            await pilot.click("#settings-restore-submit")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, SettingsScreen),
+                "An invalid restore path should not navigate away from SettingsScreen.",
+            )
+            restore_message = str(
+                settings_screen.query_one("#settings-restore-message").content
+            )
+            _assert(
+                "not a valid journal backup file" in restore_message,
+                f"Expected an invalid-backup error message, got {restore_message!r}.",
+            )
+            _assert(
+                journal_core.load_json(journal_path) == [],
+                "A failed restore attempt should not have touched the on-disk journal.",
+            )
+
+            # Now restore from the real external path (arbitrary location,
+            # never placed in the journal's own backup folder). A real-time
+            # pause (not just pilot.pause()'s message-queue drain) is needed
+            # first: Button.press() applies a 0.2s "-active" class and
+            # Button._on_click() ignores a click that lands while it's
+            # still set, so clicking the same button twice in quick
+            # succession would otherwise silently drop the second click.
+            path_input.value = external_backup_path
+            await asyncio.sleep(0.25)
+            await pilot.click("#settings-restore-submit")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryListScreen),
+                "A successful restore should return to EntryListScreen, got "
+                f"{type(app.screen).__name__}.",
+            )
+            list_message = str(app.screen.query_one("#entrylist-message").content)
+            _assert(
+                "restored from" in list_message.lower(),
+                f"Expected a restore-complete message, got {list_message!r}.",
+            )
+
+        # Verify on-disk: the deleted entry is back, decryptable with the
+        # original password, and restoring made its own pre-restore safety
+        # backup of the (empty) journal that was in place before restore.
+        restored_data = journal_core.load_json(journal_path)
+        restored_entry = next(
+            (e for e in restored_data if e.get("date") == entry_date), None
+        )
+        _assert(
+            restored_entry is not None,
+            f"No on-disk entry found for {entry_date} after restore.",
+        )
+        decrypted = journal_core.decrypt_message(
+            restored_entry["entry"], bytearray(password, "utf-8")
+        )
+        _assert(
+            decrypted == entry_body,
+            "On-disk decrypted body after restore did not match the original: "
+            f"expected {entry_body!r}, got {decrypted!r}.",
+        )
+        _assert(
+            len(journal_core.list_journal_backups(journal_path)) == 1,
+            "Expected one safety backup (of the pre-restore empty journal) "
+            "to have been created during restore.",
+        )
+    finally:
+        if original_journal_file is not None:
+            os.environ["ENCRYPTED_JOURNAL_FILE"] = original_journal_file
+        else:
+            os.environ.pop("ENCRYPTED_JOURNAL_FILE", None)
+
+
 OMARCHY_FIXTURE_COLORS_TOML = """
 mode = "dark"
 accent = "#509475"
@@ -512,6 +678,7 @@ def main():
             asyncio.run(_run(journal_path))
             asyncio.run(_run_session_lock_scenario(journal_path))
             asyncio.run(_run_overwrite_guard_scenario(temp_dir))
+            asyncio.run(_run_backup_restore_scenario(temp_dir))
             asyncio.run(_run_omarchy_theme_scenario(temp_dir))
 
             print("PASS: TUI smoke test completed successfully.")

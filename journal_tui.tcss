@@ -203,3 +203,92 @@ Screen {
 #delete-confirm-reprompt-submit {
     width: 100%;
 }
+
+#settings-dialog {
+    width: 80%;
+    height: 100%;
+    padding: 1 2;
+    border: round $primary;
+    background: $panel;
+}
+
+#settings-title {
+    text-style: bold;
+    width: 100%;
+    content-align: center middle;
+    padding-bottom: 1;
+}
+
+#settings-main Button {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#settings-message {
+    color: $text-muted;
+    height: auto;
+    min-height: 1;
+    padding-top: 1;
+}
+
+#settings-restore {
+    height: 1fr;
+}
+
+#settings-restore-title {
+    text-style: bold;
+    width: 100%;
+    padding-bottom: 1;
+}
+
+#settings-restore-list-label,
+#settings-restore-path-label {
+    color: $text-muted;
+}
+
+#settings-restore-list {
+    height: 1fr;
+    min-height: 3;
+    border: round $primary-background;
+}
+
+#settings-restore-path-input {
+    margin-top: 1;
+}
+
+#settings-restore-message {
+    color: $warning;
+    height: 3;
+    padding-bottom: 1;
+}
+
+#settings-restore-buttons {
+    height: auto;
+    align: center middle;
+}
+
+#settings-restore-buttons Button {
+    margin: 0 1;
+    min-width: 10;
+}
+
+#settings-restore-skip-backup {
+    height: auto;
+    padding-top: 1;
+}
+
+#settings-restore-skip-message {
+    color: $error;
+    width: 100%;
+    padding-bottom: 1;
+}
+
+#settings-restore-skip-buttons {
+    height: auto;
+    align: center middle;
+}
+
+#settings-restore-skip-buttons Button {
+    margin: 0 1;
+    min-width: 12;
+}

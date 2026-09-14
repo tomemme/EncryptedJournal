@@ -85,10 +85,22 @@ Binding across every task below — a reviewer checks these regardless of which 
   current-theme source instead of the GUI's old, stale `alacritty.toml` path. Backup/
   restore, password rotation, and rotating-file logging (previously GUI-only, inline) also
   moved into `journal_core.py` as shared functions, with the GUI's Settings dialog wired to
-  call them. The TUI does not have its own screens for backup/restore/password-rotation
-  yet — that remains future work, per the "Explicitly out of scope this round" note below,
-  which was true for the TUI's original build and remains true today for those three
-  specific TUI screens even though the underlying logic is now shared and ready.
+  call them. The TUI did not have its own screens for backup/restore/password-rotation at
+  that point — that was future work, per the "Explicitly out of scope this round" note
+  below, which was true for the TUI's original build.
+
+  **Update (later still):** the TUI gained its own backup/restore screen
+  (`SettingsScreen`, pushed via the `s` key from `EntryListScreen`) — see
+  `journal_tui.py`. Unlike the GUI's native file-picker-based restore, the TUI's restore
+  accepts a path typed/pasted into an `Input` (in addition to picking from the list of
+  backups already sitting beside the journal file), so a backup living anywhere on disk
+  can be restored directly without first being copied into the journal's own folder. This
+  surfaced a latent bug in the shared `journal_core.validate_backup_file`: it delegated to
+  `load_json_from_path`, which treats a nonexistent path as "new empty journal" (`[]`) —
+  correct for the main journal path, wrong for a restore candidate — so a mistyped/missing
+  path would have silently "restored" an empty journal instead of failing. Fixed to raise
+  `ValueError` up front when the path doesn't exist. Password rotation remains the one
+  screen the TUI still doesn't have (still deferred, per below).
 - Every new smoke-test script (`scripts/core_smoke_test.py`, `scripts/tui_smoke_test.py`) follows
   `scripts/smoke_test.py`'s existing conventions: a `main()` returning `0`/`1`, `PASS:`/`FAIL:`
   prefixed stdout, `if __name__ == "__main__": raise SystemExit(main())`.
