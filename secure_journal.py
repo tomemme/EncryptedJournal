@@ -471,6 +471,18 @@ class SecureJournalApp:
         self._show_modal_dialog(dialog)
         dialog.wait_window()
 
+    def _tk_major_version(self):
+        """Cached major version of the running Tcl/Tk (e.g. 9 for 9.0.4)."""
+        if not hasattr(self, "_tk_major_version_cache"):
+            try:
+                patchlevel = self.root.tk.call("info", "patchlevel")
+                self._tk_major_version_cache = int(str(patchlevel).split(".")[0])
+            except Exception:
+                # Unknown/unparseable version: assume the newer, stricter
+                # Tk 9 behavior rather than risk treating it as safe.
+                self._tk_major_version_cache = 9
+        return self._tk_major_version_cache
+
     def _tk_supports_image_style_overrides(self):
         """Whether it's safe to override Button/Treeview.Heading/Scrollbar
         ttk layouts with custom flat-color image elements (see
@@ -481,20 +493,66 @@ class SecureJournalApp:
         custom ttk::style layout. This works correctly under Tcl/Tk 8.6,
         but under Tk 9.0.4 the exact same calls have been observed to hang
         the app's event loop entirely (unresponsive, unclosable window) -
-        likely a Tk 9 regression in image-element/layout handling (the
-        theme's own built-in image-state logic for the treeview's leaf-row
-        indicator is also known to misbehave under Tk 9, though only
-        cosmetically). Until that's root-caused, only enable this on Tk 8.
+        likely a Tk 9 regression in image-element/layout handling. Until
+        that's root-caused, only enable this on Tk 8.
         """
-        if not hasattr(self, "_tk_major_version_cache"):
-            try:
-                patchlevel = self.root.tk.call("info", "patchlevel")
-                self._tk_major_version_cache = int(str(patchlevel).split(".")[0])
-            except Exception:
-                # Unknown/unparseable version: assume unsafe, skip the
-                # image-layout overrides rather than risk a repeat hang.
-                self._tk_major_version_cache = 9
-        return self._tk_major_version_cache < 9
+        return self._tk_major_version() < 9
+
+    def _fix_tk9_treeview_disclosure_indicator(self):
+        """Work around a Tk 9 regression where Azure's own baked-image
+        Treeitem.indicator ignores the 'leaf'/'open' ttk states entirely -
+        every row (including leaf/dated entries with no children) renders
+        the same static disclosure triangle, regardless of whether it has
+        children or is expanded/collapsed. Confirmed Azure-specific: the
+        stock 'clam' theme's own (non-image, vector-drawn) indicator
+        responds to both states correctly under the same Tk 9 build.
+
+        Fix: borrow clam's indicator element under a new name (ttk's
+        documented "element create <name> from <theme> <sourceElement>"
+        idiom - reusing an existing, working element, not defining a new
+        custom image element, which is the operation already confirmed to
+        hang the event loop under Tk 9 - see
+        _tk_supports_image_style_overrides), then point the azure theme's
+        own Treeview.Item layout at it instead of Azure's broken element.
+        Only the indicator changes; Treeitem.image/text/padding stay
+        Azure's.
+
+        Azure's Treeview.Item layout (and the Treeitem.indicator element
+        itself) is defined per-theme (inside each azure-dark/azure-light
+        theme's own `ttk::style theme settings` block in theme/dark.tcl
+        and theme/light.tcl), so both element creation and the layout
+        override apply to whichever azure-* theme is currently active -
+        this must be (and is, via apply_theme) called again after every
+        theme switch. Re-creating the borrowed element for a theme it was
+        already created under raises a "Duplicate element" TclError - one
+        is expected and ignored on every toggle back to a previously-seen
+        theme; the layout override itself is safely re-appliable every
+        time.
+        """
+        if self._tk_major_version() < 9:
+            return  # Azure's own indicator already works correctly here.
+
+        try:
+            self.root.tk.call(
+                "ttk::style", "element", "create", "Fixed.Treeitem.indicator",
+                "from", "clam", "Treeitem.indicator",
+            )
+        except tk.TclError:
+            pass  # Already created for this theme on an earlier toggle.
+
+        item_layout = (
+            "Treeitem.padding", "-sticky", "nswe", "-children", (
+                "Fixed.Treeitem.indicator", "-side", "left", "-sticky", "",
+                "Treeitem.image", "-side", "left", "-sticky", "",
+                "Treeitem.text", "-side", "left", "-sticky", "",
+            ),
+        )
+        try:
+            self.root.tk.call("ttk::style", "layout", "Treeview.Item", item_layout)
+        except tk.TclError as e:
+            self.logger.warning(
+                "Could not apply the Tk 9 treeview indicator fix: %s", e
+            )
 
     def apply_omarchy_colors(self):
         """
@@ -1445,6 +1503,7 @@ class SecureJournalApp:
     def apply_theme(self):
         try:
             self.root.tk.call("set_theme", self.current_theme)
+            self._fix_tk9_treeview_disclosure_indicator()
             self._apply_text_selection_style()
             self._apply_help_button_style()
             self._style_help_overlay()

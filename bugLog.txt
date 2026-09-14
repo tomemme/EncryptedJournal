@@ -7,15 +7,28 @@ Known gaps (left as-is on purpose):
   logic already lives in journal_core.py (create_journal_backup,
   list_journal_backups, validate_backup_file, rotate_journal_password,
   log_password_rotation_failures), ready for the TUI to build on.
-- Tk 9 treeview bug: leaf-row (dated entry) tree items show a disclosure
-  triangle they shouldn't have. Confirmed Tk-9-specific (does not
-  reproduce under Tk 8.6) - a Tk 9 regression in the vendored Azure ttk
-  theme's image-based indicator, not our code. Workaround: run the GUI
-  with a Tk 8.6 Python (e.g. system python3) instead of a Tk 9.0.4 one
-  (e.g. a uv-managed venv's bundled Python). apply_omarchy_colors's
-  button/scrollbar/treeview-heading recoloring is also gated off on Tk 9
-  for the same family of image-rendering issues
-  (_tk_supports_image_style_overrides in secure_journal.py).
+- [FIXED] Tk 9 treeview bug: leaf-row (dated entry) tree items showed a
+  disclosure triangle they shouldn't have. Root cause (confirmed via an
+  isolated repro, not just inference): Azure's own Treeitem.indicator is a
+  baked-image element whose leaf/open state handling is entirely ignored
+  under Tk 9 - every row got the same static triangle regardless of
+  children or open/closed state. Confirmed Azure-specific, not a general
+  Tk 9/ttk regression: the stock 'clam' theme's own (non-image) indicator
+  responds to both states correctly on the same Tk 9 build.
+  Fix (secure_journal.py, apply_theme -> _fix_tk9_treeview_disclosure_indicator):
+  borrow clam's indicator element under a new name via ttk's documented
+  "element create <name> from <theme> <sourceElement>" idiom, then point
+  Azure's own Treeview.Item layout at it instead of Azure's broken
+  element. This is a *different* operation from the one that hangs Tk 9
+  (see _tk_supports_image_style_overrides below) - it reuses an existing,
+  already-correct element rather than defining a brand-new custom image
+  element - and was verified hang-free via a timeout-guarded, standalone
+  reproduction script (never touching the real app) before being ported
+  in, then re-verified against the real app with real journal entries.
+  apply_omarchy_colors's button/scrollbar/treeview-heading recoloring is
+  still gated off on Tk 9 for the unrelated, actually-hangs family of
+  image-rendering issues (_tk_supports_image_style_overrides in
+  secure_journal.py) - that one is untouched by this fix.
 - [FIXED] Failed-attempt lockout (5 wrong passwords) was implemented
   independently in both frontends as two separately-maintained literals
   (SecureJournalApp.max_attempts in secure_journal.py,
