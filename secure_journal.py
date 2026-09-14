@@ -593,6 +593,15 @@ class SecureJournalApp:
                 "Omarchy.TButton",
                 background=colors["accent"],
                 foreground=button_fg,
+                # bordercolor/lightcolor/darkcolor/relief only matter to the
+                # Tk-9 borrowed-clam button element below (clam's
+                # Button.border fills using these, not "background") - set
+                # unconditionally since they're harmless no-ops for the Tk-8
+                # image element, which ignores them entirely.
+                bordercolor=colors["accent"],
+                lightcolor=colors["accent"],
+                darkcolor=colors["accent"],
+                relief="flat",
                 borderwidth=0,
                 focusthickness=1,
                 focuscolor=colors["accent"],
@@ -606,12 +615,31 @@ class SecureJournalApp:
                     ("pressed", accent_pressed),
                     ("disabled", accent_disabled),
                 ],
+                bordercolor=[
+                    ("!disabled", colors["accent"]),
+                    ("active", accent_hover),
+                    ("pressed", accent_pressed),
+                    ("disabled", accent_disabled),
+                ],
+                lightcolor=[
+                    ("!disabled", colors["accent"]),
+                    ("active", accent_hover),
+                    ("pressed", accent_pressed),
+                    ("disabled", accent_disabled),
+                ],
+                darkcolor=[
+                    ("!disabled", colors["accent"]),
+                    ("active", accent_hover),
+                    ("pressed", accent_pressed),
+                    ("disabled", accent_disabled),
+                ],
                 foreground=[
                     ("!disabled", button_fg),
                     ("disabled", text_disabled)
                 ]
             )
 
+            button_element_name = "Omarchy.Button.button"
             if self._tk_supports_image_style_overrides():
                 # Azure's TButton layout draws a baked PNG image
                 # (Button.button) for the button body, which ignores the
@@ -625,7 +653,6 @@ class SecureJournalApp:
                     self._omarchy_button_image = tk.PhotoImage(width=2, height=2)
                 self._omarchy_button_image.put(colors["accent"], to=(0, 0, 2, 2))
 
-                button_element_name = "Omarchy.Button.button"
                 try:
                     if button_element_name not in style.element_names():
                         style.element_create(
@@ -637,29 +664,51 @@ class SecureJournalApp:
                         )
                 except tk.TclError:
                     pass
+            else:
+                # Tk 9: defining a brand-new custom image element (the
+                # branch above) is the exact operation confirmed to hang
+                # the event loop under Tk 9 - see
+                # _tk_supports_image_style_overrides. Instead, borrow
+                # clam's own Button.border element under a new name (ttk's
+                # documented "element create <name> from <theme>
+                # <sourceElement>" idiom, reusing an existing, working
+                # element rather than defining a new image one - the same
+                # fix pattern already used for the Tk-9 treeview disclosure
+                # indicator). Unlike Azure's baked image, clam's
+                # Button.border actually honors the bordercolor/lightcolor/
+                # darkcolor configured above, giving a real flat accent
+                # fill. This element is per-theme scoped, so a "Duplicate
+                # element" on re-entering a previously-seen theme (e.g. a
+                # light/dark toggle back) is expected and harmless.
+                try:
+                    style.element_create(
+                        button_element_name, "from", "clam", "Button.border"
+                    )
+                except tk.TclError:
+                    pass
 
-                style.layout(
-                    "Omarchy.TButton",
-                    [
-                        (
-                            button_element_name,
-                            {
-                                "sticky": "nswe",
-                                "children": [
-                                    (
-                                        "Button.padding",
-                                        {
-                                            "sticky": "nswe",
-                                            "children": [
-                                                ("Button.label", {"sticky": "nswe"})
-                                            ],
-                                        },
-                                    )
-                                ],
-                            },
-                        )
-                    ],
-                )
+            style.layout(
+                "Omarchy.TButton",
+                [
+                    (
+                        button_element_name,
+                        {
+                            "sticky": "nswe",
+                            "children": [
+                                (
+                                    "Button.padding",
+                                    {
+                                        "sticky": "nswe",
+                                        "children": [
+                                            ("Button.label", {"sticky": "nswe"})
+                                        ],
+                                    },
+                                )
+                            ],
+                        },
+                    )
+                ],
+            )
 
             style.configure(
                 "Omarchy.TFrame",

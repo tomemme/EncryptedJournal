@@ -29,6 +29,24 @@ Known gaps (left as-is on purpose):
   still gated off on Tk 9 for the unrelated, actually-hangs family of
   image-rendering issues (_tk_supports_image_style_overrides in
   secure_journal.py) - that one is untouched by this fix.
+- [FIXED] Buttons stayed flat default-grey under Tk 9 instead of the
+  Omarchy accent color (unlike the text entry/treeview background, which
+  already worked) - same root cause as the treeview bug above: Azure's
+  Button.button is a baked-image element that ignores the
+  background/foreground options already being configured on
+  "Omarchy.TButton", and the actual recolor step (swapping in a
+  flat-color image element) was gated off on Tk 9 since that's the exact
+  operation confirmed to hang the event loop
+  (_tk_supports_image_style_overrides remains gating *that* path,
+  untouched). Fix (secure_journal.py, apply_omarchy_colors): on Tk 9,
+  borrow clam's Button.border element under a new name (same "element
+  create <name> from <theme> <sourceElement>" idiom as the treeview fix)
+  instead of defining a new image element, and configure
+  bordercolor/lightcolor/darkcolor (what clam's border element actually
+  paints with) alongside the existing background/foreground. Verified via
+  an isolated repro first (normal + hover state), then against the real
+  app (main window, Settings dialog, and 3x repeated apply_omarchy_colors()
+  calls simulating the live Omarchy-theme-file poll) - all hang-free.
 - [FIXED] Failed-attempt lockout (5 wrong passwords) was implemented
   independently in both frontends as two separately-maintained literals
   (SecureJournalApp.max_attempts in secure_journal.py,
