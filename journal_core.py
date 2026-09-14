@@ -455,13 +455,18 @@ DEFAULT_MAX_BACKUPS = 10
 
 
 def create_journal_backup(journal_path, *, max_backups=DEFAULT_MAX_BACKUPS, now=None):
-    """Copy journal_path to '<dir>/<basename>.bak-<YYYYMMDD-HHMMSS>', then
-    prune to the newest `max_backups` (best-effort - a prune failure on one
-    old backup doesn't stop the others). Returns the new backup's path.
+    """Copy journal_path to '<dir>/<basename>.bak-<YYYYMMDD-HHMMSS-ffffff>',
+    then prune to the newest `max_backups` (best-effort - a prune failure on
+    one old backup doesn't stop the others). Returns the new backup's path.
     Propagates any exception from the copy itself.
+
+    Includes microseconds in the timestamp so two backups created within
+    the same wall-clock second (e.g. two quick clicks, or a fast automated
+    test) get distinct filenames instead of the second one silently
+    overwriting the first via shutil.copy2.
     """
     ensure_parent_dir(journal_path)
-    timestamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    timestamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S-%f")
     base_name = os.path.basename(journal_path)
     backup_dir = os.path.dirname(journal_path) or "."
     backup_path = os.path.join(backup_dir, f"{base_name}.bak-{timestamp}")

@@ -20,11 +20,14 @@ Known gaps (left as-is on purpose):
   in both frontends (SecureJournalApp.max_attempts in secure_journal.py,
   UnlockScreen.MAX_FAILED_ATTEMPTS in journal_tui.py) - not shared via
   journal_core.py. Possible future unification.
-- journal_core.create_journal_backup's timestamp suffix has 1-second
-  granularity ("%Y%m%d-%H%M%S"). Two backups created within the same
-  wall-clock second collide on filename and silently overwrite each
-  other instead of both existing. Low real-world risk (a user won't
-  trigger two backups within the same second), noted rather than fixed.
+- [FIXED] journal_core.create_journal_backup's timestamp suffix used to
+  have 1-second granularity ("%Y%m%d-%H%M%S"), so two backups created
+  within the same wall-clock second would collide on filename and
+  silently overwrite each other instead of both existing. Now includes
+  microseconds ("%Y%m%d-%H%M%S-%f"), so this no longer happens.
+  scripts/smoke_test.py's time.sleep(1.1) workaround for this (with a
+  comment referencing it) is now unnecessary but harmless - left as-is
+  since that file must keep passing unmodified.
 
 Needs verification (not testable from the dev sandbox this session):
 - packaging/arch/PKGBUILD now depends on python-textual - never confirmed
