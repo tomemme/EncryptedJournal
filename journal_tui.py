@@ -43,7 +43,7 @@ logger = journal_core.configure_rotating_logger(
     journal_core.resolve_journal_path(), logger_name="journal_tui"
 )
 
-MAX_FAILED_ATTEMPTS = 5  # matches SecureJournalApp.max_attempts in secure_journal.py
+MAX_FAILED_ATTEMPTS = journal_core.DEFAULT_MAX_PASSWORD_ATTEMPTS
 
 DEFAULT_LOCK_SECONDS = 300  # 5 minutes, overridable via ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS
 SESSION_LOCK_CHECK_INTERVAL = 0.25  # seconds between inactivity-timer checks

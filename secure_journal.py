@@ -79,7 +79,7 @@ class SecureJournalApp:
         # overwrite a different existing entry".
         self.loaded_entry_date = None
         self.failed_attempts = 0
-        self.max_attempts = 5
+        self.max_attempts = journal_core.DEFAULT_MAX_PASSWORD_ATTEMPTS
         self.dictionary = None
         self.spellcheck_enabled = False
         self.help_overlay = None

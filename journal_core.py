@@ -34,6 +34,16 @@ except ImportError:
     con = None
 
 
+DEFAULT_MAX_PASSWORD_ATTEMPTS = 5
+"""Shared failed-password-attempt lockout threshold. Each frontend tracks
+its own attempt count and reacts to hitting this differently
+(SecureJournalApp.max_attempts exits the GUI; journal_tui.py's
+UnlockScreen locks out further input for the session) - only the
+threshold itself is shared, to keep the two frontends' lockouts from
+silently drifting apart as two independently-maintained literals.
+"""
+
+
 @contextmanager
 def secure_password(password):
     """Provide a mutable buffer for a password and wipe it afterwards."""

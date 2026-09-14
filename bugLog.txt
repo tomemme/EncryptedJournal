@@ -16,10 +16,16 @@ Known gaps (left as-is on purpose):
   button/scrollbar/treeview-heading recoloring is also gated off on Tk 9
   for the same family of image-rendering issues
   (_tk_supports_image_style_overrides in secure_journal.py).
-- Failed-attempt lockout (5 wrong passwords) is implemented independently
-  in both frontends (SecureJournalApp.max_attempts in secure_journal.py,
-  UnlockScreen.MAX_FAILED_ATTEMPTS in journal_tui.py) - not shared via
-  journal_core.py. Possible future unification.
+- [FIXED] Failed-attempt lockout (5 wrong passwords) was implemented
+  independently in both frontends as two separately-maintained literals
+  (SecureJournalApp.max_attempts in secure_journal.py,
+  UnlockScreen.MAX_FAILED_ATTEMPTS in journal_tui.py, the latter kept in
+  sync with the former only by a comment). Both now read
+  journal_core.DEFAULT_MAX_PASSWORD_ATTEMPTS. Note this only unifies the
+  threshold - the lockout *behavior* stays intentionally different per
+  frontend (the GUI exits the app; the TUI disables further input on
+  UnlockScreen for that session), since that's each frontend's own UX
+  model, not something to unify.
 - [FIXED] journal_core.create_journal_backup's timestamp suffix used to
   have 1-second granularity ("%Y%m%d-%H%M%S"), so two backups created
   within the same wall-clock second would collide on filename and
