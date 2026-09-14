@@ -8,7 +8,6 @@ only journal_core plus Textual, so it stays usable headless / over SSH.
 """
 
 import getpass
-import logging
 import os
 from datetime import datetime
 
@@ -28,23 +27,25 @@ from textual.widgets import (
 )
 
 import journal_core
+import omarchy_theme
 
-logger = logging.getLogger("journal_tui")
-# No handler configured here on purpose: without one, a warning from
-# journal_core (e.g. load_json skipping a malformed record) falls through to
-# logging.lastResort and writes raw to stderr, which corrupts the
-# actively-rendered Textual frame. A NullHandler silences that fallback
-# without adding new logging infrastructure - secure_journal.py's
-# RotatingFileHandler setup is a bound SecureJournalApp method tied to GUI
-# state (self.filename), and journal_tui.py must never import
-# secure_journal, so it isn't reusable here. User-facing errors/status are
-# already surfaced via screen UI, not via this logger.
-logger.addHandler(logging.NullHandler())
+# Writes to a rotating file (shared with secure_journal.py via
+# journal_core.configure_rotating_logger) instead of leaving the logger
+# unhandled: an unhandled warning from journal_core (e.g. load_json skipping
+# a malformed record) would otherwise fall through to logging.lastResort and
+# write raw to stderr, corrupting the actively-rendered Textual frame. A real
+# handler is always attached, which is what actually prevents that - a
+# NullHandler would only have silenced the symptom. User-facing errors/status
+# are still surfaced via screen UI, not via this logger.
+logger = journal_core.configure_rotating_logger(
+    journal_core.resolve_journal_path(), logger_name="journal_tui"
+)
 
 MAX_FAILED_ATTEMPTS = 5  # matches SecureJournalApp.max_attempts in secure_journal.py
 
 DEFAULT_LOCK_SECONDS = 300  # 5 minutes, overridable via ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS
 SESSION_LOCK_CHECK_INTERVAL = 0.25  # seconds between inactivity-timer checks
+OMARCHY_THEME_POLL_INTERVAL = 1  # seconds; two small file reads, cheap enough to poll fast
 
 
 class EntryViewScreen(Screen):
@@ -58,19 +59,31 @@ class EntryViewScreen(Screen):
       re-prompt instead of crashing or showing garbage.
 
     ctrl+s saves (matching SecureJournalApp.save_journal_entry's exact
-    validation/error strings and update-or-append-by-date logic); escape
-    discards and returns to EntryListScreen unsaved.
+    validation/error strings and update-or-append-by-date logic); ctrl+r
+    clears the body text (see action_clear_entry); escape discards and
+    returns to EntryListScreen unsaved.
+
+    EntryListScreen.action_new_entry is an overwrite guard: pressing 'n'
+    for a date that already has an entry opens this screen in "view" mode
+    with a `notice` instead of a blank "new" editor, so a same-date save
+    can't silently clobber existing content.
     """
 
     BINDINGS = [
         Binding("ctrl+s", "save_entry", "Save"),
+        Binding("ctrl+r", "clear_entry", "Clear"),
         Binding("escape", "cancel", "Cancel"),
     ]
 
-    def __init__(self, *, mode: str, date: str, **kwargs) -> None:
+    def __init__(self, *, mode: str, date: str, notice: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.mode = mode
         self.date = date
+        # Optional message shown once the editor is visible - used by
+        # EntryListScreen.action_new_entry to explain why an entry already
+        # exists for this date is being opened for editing rather than a
+        # blank "new" editor (the overwrite guard).
+        self.notice = notice
         self._encrypted_entry_text: str | None = None
         # What the password re-prompt is resuming once a valid password is
         # re-entered: "view" (decrypt-and-populate) or "save" (encrypt-and-
@@ -113,9 +126,7 @@ class EntryViewScreen(Screen):
 
     def _load_entry_for_view(self) -> None:
         data = journal_core.load_json(self.app.journal_path, logger=logger)
-        entry = next(
-            (e for e in data if e.get("date") == self.date), None
-        )
+        entry = journal_core.find_entry_by_date(data, self.date)
         if entry is None:
             self._set_message(f"No entry found for {self.date}.")
             return
@@ -153,6 +164,8 @@ class EntryViewScreen(Screen):
     def _show_editor(self) -> None:
         self.query_one("#entryview-reprompt", Vertical).add_class("hidden")
         self.query_one("#entryview-editor", Vertical).remove_class("hidden")
+        if self.notice:
+            self._set_message(self.notice)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "entryview-reprompt-password":
@@ -282,6 +295,15 @@ class EntryViewScreen(Screen):
 
     def action_cancel(self) -> None:
         self.app.pop_screen()
+
+    def action_clear_entry(self) -> None:
+        # Only clears the body text (not the date field) - lets the
+        # overwrite guard's "opened the existing entry for editing" flow
+        # be turned into a genuinely blank entry for the same date without
+        # having to retype the date.
+        self.query_one("#entryview-body", TextArea).text = ""
+        self._set_message("Cleared. Save to write a blank entry, or type a new one.")
+        self.query_one("#entryview-body", TextArea).focus()
 
     def _return_to_list(self, message: str) -> None:
         self.app.pop_screen()
@@ -516,6 +538,23 @@ class EntryListScreen(Screen):
 
     def action_new_entry(self) -> None:
         today = datetime.now().strftime("%Y-%m-%d")
+        data = journal_core.load_json(self.app.journal_path, logger=logger)
+        if journal_core.find_entry_by_date(data, today) is not None:
+            # Overwrite guard: don't hand the user a blank editor that
+            # would silently replace today's existing entry on save - open
+            # that entry for editing instead, with a notice explaining why.
+            self.app.push_screen(
+                EntryViewScreen(
+                    mode="view",
+                    date=today,
+                    notice=(
+                        f"An entry already exists for {today} - opening it "
+                        "for editing instead of starting blank. Press "
+                        "ctrl+r to clear it if you want to start over."
+                    ),
+                )
+            )
+            return
         self.app.push_screen(EntryViewScreen(mode="new", date=today))
 
     def action_view_entry(self) -> None:
@@ -739,9 +778,42 @@ class JournalApp(App):
             journal_core.keyring is not None and self.keyring_enabled
         )
 
+        # Name of the currently-applied Omarchy-derived theme (if any), so
+        # _apply_omarchy_theme can tell an unchanged poll apart from an
+        # actual theme switch. None if no Omarchy theme has been applied
+        # yet (including "Omarchy isn't present on this machine").
+        self._omarchy_theme_name: str | None = None
+
     def on_mount(self) -> None:
+        self._apply_omarchy_theme()
         self.push_screen(UnlockScreen())
         self.set_interval(SESSION_LOCK_CHECK_INTERVAL, self._check_session_lock)
+        self.set_interval(OMARCHY_THEME_POLL_INTERVAL, self._apply_omarchy_theme)
+
+    def _apply_omarchy_theme(self) -> None:
+        """Best-effort: load the current Omarchy colors.toml and, if it
+        parses and names a theme different from whichever Omarchy theme (if
+        any) is currently applied, register and switch to it live. No-ops
+        otherwise, leaving whichever theme is already active - an earlier
+        Omarchy theme, or Textual's own default if Omarchy isn't present or
+        its files are unreadable/malformed.
+
+        Called once at startup and then every OMARCHY_THEME_POLL_INTERVAL
+        seconds via set_interval, so a theme switch made on this machine
+        while the app is running is picked up within a few seconds, with no
+        restart and no manual reload keybinding needed. omarchy_theme.
+        load_omarchy_theme() never raises, so this method needs no
+        try/except of its own.
+        """
+        theme = omarchy_theme.load_omarchy_theme()
+        if theme is None or theme.name == self._omarchy_theme_name:
+            return
+        previous_name = self._omarchy_theme_name
+        self.register_theme(theme)
+        self.theme = theme.name
+        self._omarchy_theme_name = theme.name
+        if previous_name is not None:
+            self.unregister_theme(previous_name)
 
     def record_action(self) -> None:
         """Reset the inactivity clock. Screens call this from any action

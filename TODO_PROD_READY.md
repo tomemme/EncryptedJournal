@@ -7,17 +7,17 @@ Legend:
 
 ## 1) Automated Tests In CI
 - [x] Add GitHub Actions to run `py_compile` and smoke tests on Linux.
-- [x] Run core + TUI smoke tests headless (the Tkinter GUI and its Xvfb-based smoke test were removed; this project is now TUI-only).
-- [~] Add unit/smoke coverage for core flows (local smoke script exists; broader tests pending).
+- [x] Run core + TUI smoke tests headless, plus the GUI's Xvfb-based smoke test (`scripts/smoke_test.py`) now that the Tkinter GUI (`secure_journal.py`) is back alongside the TUI, both sharing `journal_core.py`.
+- [~] Add unit/smoke coverage for core flows (local smoke scripts exist; broader tests pending).
 
 ## 2) Backup Retention + Restore
-- [x] Keep only the last 10 backups.
+- [x] Keep only the last 10 backups (`journal_core.create_journal_backup`, shared).
 - [x] Prune older `journal.json.gz.bak-*` files automatically.
-- [x] Add a restore-from-backup flow in the UI.
+- [x] Add a restore-from-backup flow in the GUI (Settings dialog). Not yet exposed in the TUI - the underlying `journal_core` logic is ready for it.
 
 ## 3) Logging And Error Handling
 - [x] Replace `print(...)` with structured logging.
-- [x] Write logs to rotating files.
+- [x] Write logs to rotating files (`journal_core.configure_rotating_logger`, shared by both frontends).
 - [x] Keep popup messages concise and log detailed traces separately.
 
 ## 4) Strict Data Validation
@@ -30,20 +30,23 @@ Legend:
 - [~] Add optional password cache duration setting.
 - [x] Add a manual `Lock now` action.
 
-Note: the Tkinter GUI (`secure_journal.py`) has been removed; the Textual TUI
-(`journal_tui.py`) is now the only frontend. It implements inactivity auto-lock
+Note: the Textual TUI (`journal_tui.py`) implements inactivity auto-lock
 (`ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS`, default 300s) and a manual `l` lock-now action.
-The "password cache duration" item is `[~]` rather than `[x]` because that env var is a
-global default, not a live in-app per-session setting.
+The Tkinter GUI (`secure_journal.py`) has its own independent 5-failed-attempt lockout
+(`self.max_attempts`) restored alongside it - the two aren't unified onto one shared
+mechanism yet (possible future cleanup). The "password cache duration" item is `[~]`
+rather than `[x]` because that env var is a global default, not a live in-app
+per-session setting.
 
 ## v1 — Explicitly Deferred
 Deferred scope from the original TUI effort (see `docs/TUI_PLAN.md` "Explicitly out of
-scope this round"), still deferred now that the Tkinter GUI has been removed and this
-project is TUI-only.
-- [ ] Add password rotation.
-- [ ] Add spellcheck.
-- [ ] Add Omarchy `colors.toml` theme integration.
-- [ ] Add `omarchy-tui-install` / `.desktop` launcher packaging.
+scope this round"). The Tkinter GUI (`secure_journal.py`) is back in this repo alongside
+the TUI, sharing `journal_core.py`, so most of this is now done for the GUI - the TUI
+itself doesn't have its own screens for these yet.
+- [x] Add password rotation (GUI, via Settings; shared logic in `journal_core.rotate_journal_password`). No TUI screen yet.
+- [x] Add spellcheck (GUI only, via `pyenchant`; not applicable to a terminal UI).
+- [x] Add Omarchy `colors.toml` theme integration (both frontends, via shared `journal_core` Omarchy-reading functions).
+- [ ] Add `omarchy-tui-install` / a TUI-specific `.desktop` launcher. A second launcher command (`encrypted-journal-tui`) was added to the Arch package, but no dedicated install script or `.desktop` entry - the TUI is meant for terminal/SSH use, not an app-menu target.
 
 ## 6) Secure Storage Options
 - [x] Add optional Linux keyring integration.

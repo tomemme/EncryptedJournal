@@ -68,6 +68,27 @@ Binding across every task below — a reviewer checks these regardless of which 
 - Password rotation and spellcheck are out of scope for the TUI this round (rotation deferred to
   v2, spellcheck deferred/optional).
 - No Omarchy `colors.toml` theming or `omarchy-tui-install`/`.desktop` packaging this round.
+
+  **Update (later):** Omarchy `colors.toml` theming was implemented for the TUI in
+  `omarchy_theme.py`, reading `journal_core.py`'s `read_omarchy_colors()`/
+  `read_omarchy_theme_name()` — Omarchy's actual current-theme location:
+  `~/.local/state/omarchy/current/theme.name` and
+  `~/.local/state/omarchy/current/theme/colors.toml`. `omarchy-tui-install`/`.desktop`
+  packaging is still deferred (a TUI launcher command was added to the Arch package, but no
+  dedicated install script or `.desktop` entry, since the TUI targets terminal/SSH use).
+
+  **Update (later still):** the Tkinter GUI was brought back into this repo (previously
+  removed, see `TODO_PROD_READY.md`), so both frontends now coexist and share
+  `journal_core.py`. The GUI's own `OMARCHY_THEME_PATH`/inline `load_omarchy_theme()`
+  mentioned above no longer exist — the restored GUI was rewired onto the same
+  `journal_core` Omarchy-reading functions the TUI uses, so both frontends read the same
+  current-theme source instead of the GUI's old, stale `alacritty.toml` path. Backup/
+  restore, password rotation, and rotating-file logging (previously GUI-only, inline) also
+  moved into `journal_core.py` as shared functions, with the GUI's Settings dialog wired to
+  call them. The TUI does not have its own screens for backup/restore/password-rotation
+  yet — that remains future work, per the "Explicitly out of scope this round" note below,
+  which was true for the TUI's original build and remains true today for those three
+  specific TUI screens even though the underlying logic is now shared and ready.
 - Every new smoke-test script (`scripts/core_smoke_test.py`, `scripts/tui_smoke_test.py`) follows
   `scripts/smoke_test.py`'s existing conventions: a `main()` returning `0`/`1`, `PASS:`/`FAIL:`
   prefixed stdout, `if __name__ == "__main__": raise SystemExit(main())`.

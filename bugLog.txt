@@ -1,2 +1,41 @@
 Bugs to fix.
 
+--- Known gaps / needs verification (GUI restoration + TUI Omarchy theming session) ---
+
+Known gaps (left as-is on purpose):
+- TUI has no screens yet for backup/restore/password rotation. The shared
+  logic already lives in journal_core.py (create_journal_backup,
+  list_journal_backups, validate_backup_file, rotate_journal_password,
+  log_password_rotation_failures), ready for the TUI to build on.
+- Tk 9 treeview bug: leaf-row (dated entry) tree items show a disclosure
+  triangle they shouldn't have. Confirmed Tk-9-specific (does not
+  reproduce under Tk 8.6) - a Tk 9 regression in the vendored Azure ttk
+  theme's image-based indicator, not our code. Workaround: run the GUI
+  with a Tk 8.6 Python (e.g. system python3) instead of a Tk 9.0.4 one
+  (e.g. a uv-managed venv's bundled Python). apply_omarchy_colors's
+  button/scrollbar/treeview-heading recoloring is also gated off on Tk 9
+  for the same family of image-rendering issues
+  (_tk_supports_image_style_overrides in secure_journal.py).
+- Failed-attempt lockout (5 wrong passwords) is implemented independently
+  in both frontends (SecureJournalApp.max_attempts in secure_journal.py,
+  UnlockScreen.MAX_FAILED_ATTEMPTS in journal_tui.py) - not shared via
+  journal_core.py. Possible future unification.
+- journal_core.create_journal_backup's timestamp suffix has 1-second
+  granularity ("%Y%m%d-%H%M%S"). Two backups created within the same
+  wall-clock second collide on filename and silently overwrite each
+  other instead of both existing. Low real-world risk (a user won't
+  trigger two backups within the same second), noted rather than fixed.
+
+Needs verification (not testable from the dev sandbox this session):
+- packaging/arch/PKGBUILD now depends on python-textual - never confirmed
+  that's the real AUR/Arch package name for the textual pip package.
+- makepkg -si was never actually run to build the Arch package end to end.
+- Spellcheck (pyenchant) needs a system dictionary backend (e.g.
+  hunspell-en_us) to actually suggest corrections - only confirmed it
+  fails to load gracefully (libenchant warnings, spellcheck disabled)
+  without one, not that it works correctly with one installed.
+- HiDPI scaling code (restored as-is from the pre-removal GUI) untested
+  on this machine's actual display setup.
+- The new Xvfb-based GUI smoke-test CI step in .github/workflows/ci.yml
+  was written to match what the old (removed) CI did, but has not been
+  confirmed to actually pass on GitHub Actions' runners.

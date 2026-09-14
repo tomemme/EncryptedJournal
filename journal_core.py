@@ -9,8 +9,11 @@ import gzip
 import json
 import secrets
 import gc
+import shutil
 import tempfile
+import tomllib
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from contextlib import contextmanager
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -437,3 +440,267 @@ def load_json(filename, *, logger=None, warn_callback=None):
     if data is None:
         return []
     return data
+
+
+def find_entry_by_date(data, date_str):
+    """Return the entry dict in `data` whose 'date' matches date_str, or
+    None if there isn't one. Shared by both frontends' overwrite guards:
+    creating/saving a "new" entry for a date that already has one should
+    open the existing entry for editing instead of silently overwriting it.
+    """
+    return next((entry for entry in data if entry.get("date") == date_str), None)
+
+
+DEFAULT_MAX_BACKUPS = 10
+
+
+def create_journal_backup(journal_path, *, max_backups=DEFAULT_MAX_BACKUPS, now=None):
+    """Copy journal_path to '<dir>/<basename>.bak-<YYYYMMDD-HHMMSS>', then
+    prune to the newest `max_backups` (best-effort - a prune failure on one
+    old backup doesn't stop the others). Returns the new backup's path.
+    Propagates any exception from the copy itself.
+    """
+    ensure_parent_dir(journal_path)
+    timestamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    base_name = os.path.basename(journal_path)
+    backup_dir = os.path.dirname(journal_path) or "."
+    backup_path = os.path.join(backup_dir, f"{base_name}.bak-{timestamp}")
+    shutil.copy2(journal_path, backup_path)
+
+    backup_prefix = f"{base_name}.bak-"
+    backups = sorted(
+        (
+            os.path.join(backup_dir, file_name)
+            for file_name in os.listdir(backup_dir)
+            if file_name.startswith(backup_prefix)
+        ),
+        reverse=True,
+    )
+    for old_backup in backups[max_backups:]:
+        try:
+            os.remove(old_backup)
+        except OSError:
+            pass
+
+    return backup_path
+
+
+def list_journal_backups(journal_path):
+    """Return '<basename>.bak-*' paths beside journal_path, newest-first.
+    Empty list if the containing directory doesn't exist."""
+    base_name = os.path.basename(journal_path)
+    backup_prefix = f"{base_name}.bak-"
+    backup_dir = os.path.dirname(journal_path) or "."
+    if not os.path.isdir(backup_dir):
+        return []
+    return sorted(
+        (
+            os.path.join(backup_dir, file_name)
+            for file_name in os.listdir(backup_dir)
+            if file_name.startswith(backup_prefix)
+        ),
+        reverse=True,
+    )
+
+
+def validate_backup_file(path):
+    """Load and sanitize a candidate backup file for restore. Raises
+    ValueError if it doesn't parse as valid journal data."""
+    data = load_json_from_path(path, show_warnings=False)
+    if data is None:
+        raise ValueError(f"'{path}' is not a valid journal backup file.")
+    return data
+
+
+PASSWORD_ROTATION_SUCCESS_THRESHOLD = 0.9
+
+
+def rotate_journal_password(data, old_password, new_password):
+    """Re-encrypt every entry's 'entry' field from old_password to
+    new_password. Per-entry failures are collected rather than aborting the
+    whole rotation. Does not write or back up anything itself - the caller
+    backs up first, checks success_ratio against
+    PASSWORD_ROTATION_SUCCESS_THRESHOLD, and calls save_json.
+
+    Returns (updated_data, failed_entries, success_ratio), where
+    failed_entries is a list of {"date": ..., "reason": ...} dicts and
+    success_ratio is successful_re-encryptions / total_encrypted_entries
+    (1.0 if there were none).
+    """
+    updated_data = []
+    failed_entries = []
+    total_encrypted_entries = 0
+    successful_updates = 0
+
+    for entry in data:
+        encrypted_entry = entry.get("entry")
+        if not encrypted_entry:
+            updated_data.append(entry)
+            continue
+
+        total_encrypted_entries += 1
+        identifier = (
+            entry.get("date")
+            or entry.get("timestamp")
+            or entry.get("created_at")
+            or "Unknown entry"
+        )
+        try:
+            plaintext = decrypt_message(encrypted_entry, old_password)
+        except Exception as error:
+            failed_entries.append({"date": identifier, "reason": str(error)})
+            updated_data.append(entry)
+            continue
+
+        try:
+            new_encrypted = encrypt_message(plaintext, new_password)
+        except Exception as error:
+            failed_entries.append({"date": identifier, "reason": str(error)})
+            updated_data.append(entry)
+            continue
+
+        updated_entry = dict(entry)
+        updated_entry["entry"] = new_encrypted
+        updated_data.append(updated_entry)
+        successful_updates += 1
+
+    success_ratio = (
+        successful_updates / total_encrypted_entries
+        if total_encrypted_entries
+        else 1.0
+    )
+    return updated_data, failed_entries, success_ratio
+
+
+def log_password_rotation_failures(journal_path, failed_entries, *, now=None):
+    """Append timestamped failure lines to
+    '<dir>/password_rotation_failures.log' beside journal_path. Returns the
+    log path, or None if failed_entries is empty."""
+    if not failed_entries:
+        return None
+    log_path = os.path.join(
+        os.path.dirname(journal_path) or ".", "password_rotation_failures.log"
+    )
+    timestamp = (now or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        f"[{timestamp}] {failure['date']} - {failure['reason']}"
+        for failure in failed_entries
+    ]
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write("\n".join(lines) + "\n")
+    return log_path
+
+
+def configure_rotating_logger(
+    journal_path,
+    *,
+    logger_name="encrypted_journal",
+    env_file_var="ENCRYPTED_JOURNAL_LOG_FILE",
+    env_level_var="ENCRYPTED_JOURNAL_LOG_LEVEL",
+    default_level=logging.INFO,
+    max_bytes=512 * 1024,
+    backup_count=5,
+):
+    """Configure (idempotently - safe to call more than once) a named
+    logger with a RotatingFileHandler. Log path: env_file_var if set, else
+    '<dirname(journal_path)>/encrypted-journal.log'. Log level: env_level_var
+    if set to a valid logging level name, else default_level. Falls back to
+    a StreamHandler if the file handler can't be created (e.g. permission
+    error), so the logger always has some handler attached - this is what
+    keeps an unhandled record from ever falling through to
+    logging.lastResort's raw stderr write.
+    """
+    logger = logging.getLogger(logger_name)
+    logger.propagate = False
+
+    level_name = os.environ.get(env_level_var)
+    level = getattr(logging, level_name.upper(), default_level) if level_name else default_level
+    logger.setLevel(level)
+
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+
+    formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+
+    custom_path = os.environ.get(env_file_var)
+    if custom_path:
+        log_path = os.path.abspath(os.path.expanduser(custom_path))
+    else:
+        log_dir = os.path.dirname(journal_path) or "."
+        log_path = os.path.join(log_dir, "encrypted-journal.log")
+
+    try:
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.info("Logger initialized at %s", log_path)
+    except Exception:
+        fallback = logging.StreamHandler()
+        fallback.setFormatter(formatter)
+        logger.addHandler(fallback)
+        logger.exception("Failed to initialize file logger at %s", log_path)
+
+    return logger
+
+
+def seconds_until_next_midnight(now=None):
+    """Seconds from `now` (default datetime.now()) until the next local
+    midnight, floored at a small positive minimum so a caller's timer API
+    never sees a zero/negative delay."""
+    current = now or datetime.now()
+    next_midnight = datetime.combine(
+        current.date() + timedelta(days=1), datetime.min.time()
+    )
+    return max(0.001, (next_midnight - current).total_seconds())
+
+
+OMARCHY_STATE_DIR = os.path.expanduser("~/.local/state/omarchy")
+DEFAULT_THEME_NAME_PATH = os.path.join(OMARCHY_STATE_DIR, "current", "theme.name")
+DEFAULT_COLORS_TOML_PATH = os.path.join(
+    OMARCHY_STATE_DIR, "current", "theme", "colors.toml"
+)
+
+
+def resolve_theme_name_path():
+    """Resolve the path to Omarchy's current theme-name file, honoring the
+    ENCRYPTED_JOURNAL_OMARCHY_THEME_NAME_PATH override (used by tests)."""
+    return os.environ.get(
+        "ENCRYPTED_JOURNAL_OMARCHY_THEME_NAME_PATH", DEFAULT_THEME_NAME_PATH
+    )
+
+
+def resolve_colors_toml_path():
+    """Resolve the path to Omarchy's current colors.toml, honoring the
+    ENCRYPTED_JOURNAL_OMARCHY_COLORS_PATH override (used by tests)."""
+    return os.environ.get(
+        "ENCRYPTED_JOURNAL_OMARCHY_COLORS_PATH", DEFAULT_COLORS_TOML_PATH
+    )
+
+
+def read_omarchy_colors(path=None):
+    """Parse Omarchy's colors.toml. Returns None on any error (missing
+    file, bad TOML, permission error, etc.) rather than raising."""
+    if path is None:
+        path = resolve_colors_toml_path()
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return None
+
+
+def read_omarchy_theme_name(path=None):
+    """Read Omarchy's theme.name file. Returns None on any error."""
+    if path is None:
+        path = resolve_theme_name_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            name = f.read().strip()
+        return name or None
+    except Exception:
+        return None

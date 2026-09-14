@@ -1,10 +1,10 @@
 # QJ Task
 
 ## Mission
-start on TUI_PLAN.md
+improve project to use omarchy
 
 ## Project
-EncryptedJournal
+EncryptedJournal-tui
 
 ## Wayfinder Map
 _No map linked. Run qj-agent plan first for complex work._

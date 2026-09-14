@@ -13,6 +13,7 @@ import asyncio
 import os
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +28,17 @@ def _assert(condition, message):
 
 async def _run(journal_path):
     import journal_core
+    import journal_tui
     from journal_tui import EntryListScreen, EntryViewScreen, JournalApp, UnlockScreen
+
+    # journal_tui's module-level logger must have a real handler attached
+    # (via journal_core.configure_rotating_logger) rather than relying on
+    # logging.lastResort's raw-stderr fallback, which would corrupt the
+    # live Textual frame.
+    _assert(
+        len(journal_tui.logger.handlers) > 0,
+        "journal_tui.logger should have at least one handler attached.",
+    )
 
     entry_date = "2026-03-14"
     entry_body = "Smoke test entry body, typed via the TUI."
@@ -289,6 +300,203 @@ async def _run_session_lock_scenario(journal_path):
             os.environ.pop("ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS", None)
 
 
+async def _run_overwrite_guard_scenario(temp_dir):
+    """Overwrite guard: pressing 'n' for a date that already has an entry
+    should open that entry for editing (not a blank editor) with a notice,
+    ctrl+r should clear just the body text, and saving afterward should
+    update (not duplicate) that date's on-disk entry.
+
+    Uses its own journal file (via the ENCRYPTED_JOURNAL_FILE override,
+    saved/restored) rather than sharing `journal_path` with `_run`/
+    `_run_session_lock_scenario`, since this scenario specifically needs
+    control over what's on disk for *today's* date.
+    """
+    import journal_core
+    from journal_tui import EntryListScreen, EntryViewScreen, JournalApp, UnlockScreen
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    original_body = "Original entry for today, written first."
+    replacement_body = "Replaced after Clear."
+    password = "smoke-test-password"
+    journal_path = os.path.join(temp_dir, "overwrite-guard-journal.json.gz")
+
+    original_journal_file = os.environ.get("ENCRYPTED_JOURNAL_FILE")
+    os.environ["ENCRYPTED_JOURNAL_FILE"] = journal_path
+    try:
+        app = JournalApp()
+        async with app.run_test() as pilot:
+            _assert(
+                isinstance(app.screen, UnlockScreen),
+                f"Expected UnlockScreen on mount, got {type(app.screen).__name__}.",
+            )
+            password_input = app.screen.query_one("#password-input")
+            password_input.value = password
+            await pilot.press("enter")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryListScreen),
+                f"Unlock did not reach EntryListScreen, got {type(app.screen).__name__}.",
+            )
+
+            # Save an entry for today via the normal blank 'n' -> ctrl+s path.
+            await pilot.press("n")
+            await pilot.pause()
+            view_screen = app.screen
+            _assert(
+                isinstance(view_screen, EntryViewScreen) and view_screen.mode == "new",
+                "First 'n' press (no existing entry yet) should open a blank new entry.",
+            )
+            view_screen.query_one("#entryview-body").text = original_body
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryListScreen),
+                "Save did not return to EntryListScreen.",
+            )
+
+            # Press 'n' again: today's entry already exists, so this should
+            # open it for editing (mode="view") with a notice, not a blank
+            # editor.
+            await pilot.press("n")
+            await pilot.pause()
+            guarded_screen = app.screen
+            _assert(
+                isinstance(guarded_screen, EntryViewScreen)
+                and guarded_screen.mode == "view",
+                "'n' with an existing entry for today should open it in "
+                f"'view' mode, got mode={getattr(guarded_screen, 'mode', None)!r}.",
+            )
+            _assert(
+                guarded_screen.date == today,
+                f"Expected the guarded screen's date to be {today}, "
+                f"got {guarded_screen.date}.",
+            )
+            body_widget = guarded_screen.query_one("#entryview-body")
+            _assert(
+                body_widget.text == original_body,
+                "Overwrite guard should have loaded the existing entry's "
+                f"body, got {body_widget.text!r}.",
+            )
+            message_text = str(guarded_screen.query_one("#entryview-message").content)
+            _assert(
+                "already exists" in message_text,
+                f"Expected an overwrite-guard notice message, got {message_text!r}.",
+            )
+
+            # ctrl+r clears the body text only, leaving the date untouched.
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+            _assert(
+                body_widget.text == "",
+                "ctrl+r (Clear) should empty the entry body.",
+            )
+            date_widget = guarded_screen.query_one("#entryview-date-input")
+            _assert(
+                date_widget.value == today,
+                "ctrl+r (Clear) should not touch the date field.",
+            )
+
+            # Typing fresh content and saving should update (not duplicate)
+            # the same date's entry.
+            body_widget.text = replacement_body
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            _assert(
+                isinstance(app.screen, EntryListScreen),
+                "Save after Clear did not return to EntryListScreen.",
+            )
+
+        on_disk = journal_core.load_json(journal_path)
+        matching = [e for e in on_disk if e.get("date") == today]
+        _assert(
+            len(matching) == 1,
+            f"Expected exactly one on-disk entry for {today}, got {len(matching)}.",
+        )
+        decrypted = journal_core.decrypt_message(
+            matching[0]["entry"], bytearray(password, "utf-8")
+        )
+        _assert(
+            decrypted == replacement_body,
+            "On-disk entry after the guard+clear+save flow did not match "
+            f"the replacement body: expected {replacement_body!r}, got {decrypted!r}.",
+        )
+    finally:
+        if original_journal_file is not None:
+            os.environ["ENCRYPTED_JOURNAL_FILE"] = original_journal_file
+        else:
+            os.environ.pop("ENCRYPTED_JOURNAL_FILE", None)
+
+
+OMARCHY_FIXTURE_COLORS_TOML = """
+mode = "dark"
+accent = "#509475"
+background = "#111c18"
+foreground = "#C1C497"
+bright_yellow = "#E5C736"
+bright_red = "#db9f9c"
+bright_green = "#63b07a"
+bright_magenta = "#75bbb3"
+"""
+
+
+async def _run_omarchy_theme_scenario(temp_dir):
+    """Omarchy theme integration: app.theme reflects a fixture colors.toml
+    when the ENCRYPTED_JOURNAL_OMARCHY_*_PATH overrides point at one, and
+    falls back to Textual's own default theme when they don't (no Omarchy
+    present).
+    """
+    from journal_tui import JournalApp
+
+    colors_path = os.path.join(temp_dir, "omarchy-colors.toml")
+    name_path = os.path.join(temp_dir, "omarchy-theme.name")
+    with open(colors_path, "w", encoding="utf-8") as f:
+        f.write(OMARCHY_FIXTURE_COLORS_TOML)
+    with open(name_path, "w", encoding="utf-8") as f:
+        f.write("fixture-theme")
+
+    original_colors_path = os.environ.get("ENCRYPTED_JOURNAL_OMARCHY_COLORS_PATH")
+    original_name_path = os.environ.get("ENCRYPTED_JOURNAL_OMARCHY_THEME_NAME_PATH")
+    try:
+        # Case 1: fixture present -> app picks it up at startup.
+        os.environ["ENCRYPTED_JOURNAL_OMARCHY_COLORS_PATH"] = colors_path
+        os.environ["ENCRYPTED_JOURNAL_OMARCHY_THEME_NAME_PATH"] = name_path
+
+        app = JournalApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            _assert(
+                app.theme == "omarchy-fixture-theme",
+                f"Expected app.theme == 'omarchy-fixture-theme', got {app.theme!r}.",
+            )
+            applied = app.get_theme(app.theme)
+            _assert(
+                applied.primary == "#509475",
+                f"Expected applied theme primary #509475, got {applied.primary}.",
+            )
+
+        # Case 2: no Omarchy present -> app keeps Textual's own default.
+        missing_path = os.path.join(temp_dir, "does-not-exist.toml")
+        os.environ["ENCRYPTED_JOURNAL_OMARCHY_COLORS_PATH"] = missing_path
+
+        app = JournalApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            _assert(
+                not app.theme.startswith("omarchy-"),
+                "Expected Textual's own default theme when Omarchy colors.toml "
+                f"is missing, got {app.theme!r}.",
+            )
+    finally:
+        if original_colors_path is not None:
+            os.environ["ENCRYPTED_JOURNAL_OMARCHY_COLORS_PATH"] = original_colors_path
+        else:
+            os.environ.pop("ENCRYPTED_JOURNAL_OMARCHY_COLORS_PATH", None)
+        if original_name_path is not None:
+            os.environ["ENCRYPTED_JOURNAL_OMARCHY_THEME_NAME_PATH"] = original_name_path
+        else:
+            os.environ.pop("ENCRYPTED_JOURNAL_OMARCHY_THEME_NAME_PATH", None)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tui-smoke-") as temp_dir:
         journal_path = os.path.join(temp_dir, "journal.json.gz")
@@ -303,6 +511,8 @@ def main():
 
             asyncio.run(_run(journal_path))
             asyncio.run(_run_session_lock_scenario(journal_path))
+            asyncio.run(_run_overwrite_guard_scenario(temp_dir))
+            asyncio.run(_run_omarchy_theme_scenario(temp_dir))
 
             print("PASS: TUI smoke test completed successfully.")
             return 0

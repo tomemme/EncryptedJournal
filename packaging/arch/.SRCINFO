@@ -1,5 +1,5 @@
 pkgbase = encrypted-journal-git
-	pkgdesc = Encrypted desktop journal app (Tkinter + AES-GCM)
+	pkgdesc = Encrypted journal app with a Tkinter GUI and a Textual TUI (AES-GCM)
 	pkgver = 0.r101.g711f4e1
 	pkgrel = 1
 	url = https://github.com/tomemme/EncryptedJournal
@@ -10,6 +10,7 @@ pkgbase = encrypted-journal-git
 	depends = tk
 	depends = python-cryptography
 	depends = python-pyenchant
+	depends = python-textual
 	optdepends = python-keyring: optional system keyring integration
 	provides = encrypted-journal
 	conflicts = encrypted-journal
