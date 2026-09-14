@@ -7,7 +7,7 @@ Legend:
 
 ## 1) Automated Tests In CI
 - [x] Add GitHub Actions to run `py_compile` and smoke tests on Linux.
-- [x] Run smoke tests under `xvfb-run` for Tkinter UI.
+- [x] Run core + TUI smoke tests headless (the Tkinter GUI and its Xvfb-based smoke test were removed; this project is now TUI-only).
 - [~] Add unit/smoke coverage for core flows (local smoke script exists; broader tests pending).
 
 ## 2) Backup Retention + Restore
@@ -26,22 +26,24 @@ Legend:
 - [x] Avoid failing entire file due to one bad entry.
 
 ## 5) Session Lock Features
-- [ ] Add optional inactivity auto-lock.
-- [ ] Add optional password cache duration setting.
-- [ ] Add a manual `Lock now` action.
+- [x] Add optional inactivity auto-lock.
+- [~] Add optional password cache duration setting.
+- [x] Add a manual `Lock now` action.
 
-Note: the Textual TUI (`journal_tui.py`, TUI_PLAN Tasks 5 & 8) now has both inactivity
-auto-lock (`ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS`, default 300s) and a manual `l` lock-now
-action. The Tkinter GUI (`secure_journal.py`) still does not implement either, so the
-`[ ]` items above remain accurate for the GUI.
+Note: the Tkinter GUI (`secure_journal.py`) has been removed; the Textual TUI
+(`journal_tui.py`) is now the only frontend. It implements inactivity auto-lock
+(`ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS`, default 300s) and a manual `l` lock-now action.
+The "password cache duration" item is `[~]` rather than `[x]` because that env var is a
+global default, not a live in-app per-session setting.
 
-## TUI (v1) — Explicitly Deferred
-Deferred scope from the TUI effort (see `docs/TUI_PLAN.md` "Explicitly out of scope this
-round"); none of this applies to the GUI, which is unaffected by the TUI plan.
-- [ ] Add password rotation to the TUI.
-- [ ] Add spellcheck to the TUI.
-- [ ] Add Omarchy `colors.toml` theme integration for the TUI.
-- [ ] Add `omarchy-tui-install` / `.desktop` launcher packaging for the TUI.
+## v1 — Explicitly Deferred
+Deferred scope from the original TUI effort (see `docs/TUI_PLAN.md` "Explicitly out of
+scope this round"), still deferred now that the Tkinter GUI has been removed and this
+project is TUI-only.
+- [ ] Add password rotation.
+- [ ] Add spellcheck.
+- [ ] Add Omarchy `colors.toml` theme integration.
+- [ ] Add `omarchy-tui-install` / `.desktop` launcher packaging.
 
 ## 6) Secure Storage Options
 - [x] Add optional Linux keyring integration.

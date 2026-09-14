@@ -1,30 +1,29 @@
 # Encrypted Journal
-A cross-platform encrypted journal application built with Python, Tkinter, and the `cryptography` library. Securely write, save, load, and delete journal entries with AES-GCM encryption, featuring a modern GUI, spell checking, and session timeout for added security. Entries are stored in a compressed JSON file (`journal.json.gz`) that works seamlessly across Windows, macOS, and Linux.
+A cross-platform encrypted journal application built with Python, [Textual](https://textual.textualize.io/), and the `cryptography` library. Securely write, save, load, and delete journal entries with AES-GCM encryption, featuring a terminal UI and session auto-lock for added security. Entries are stored in a compressed JSON file (`journal.json.gz`) that works seamlessly across Windows, macOS, and Linux.
 
 # Features
 - **Secure Encryption**: Entries are encrypted using AES-GCM with keys derived via Scrypt from your password, using cryptographically secure salts and nonces.
-- **Save and Load Entries**: Encrypt and save entries to `journal.json.gz`, and decrypt them by date using a treeview interface.
-- **Delete Entries**: Remove specific entries with confirmation prompts.
-- **Spell Checking**: Real-time spell checking with right-click suggestions (powered by `pyenchant`).
-- **Session Security**: 5-minute session timeout requires re-entering your password, with secure password cleanup from memory.
+- **Save and Load Entries**: Encrypt and save entries to `journal.json.gz`, and decrypt them by date using a Tree-based navigation view grouped by year-month.
+- **Delete Entries**: Remove specific entries with a Yes/No confirmation.
+- **Session Security**: Inactivity auto-lock (`ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS`, default 5 minutes) plus a manual lock-now key, with secure password cleanup from memory.
 - **Cross-Platform**: Works on Windows, macOS, and Linux with consistent file handling and permissions.
-- **Theming**: Toggle between light and dark themes using the `azure.tcl` theme file.
 - **Days Since Last Entry**: Displays the time since your last journal entry.
-- **Clear Entry**: Reset the text and date fields with a single click.
 
 # Requirements
 - Python 3.11+
 - Dependencies:
+  - `textual` (terminal UI)
   - `cryptography` (for encryption/decryption)
-  - `pyenchant` (for spell checking)
   - `keyring` (optional, for saved passwords via system keyring)
   - `pywin32` (optional, for Windows file permissions)
 
 # Installation
-1. Clone the Repository
-    cd encrypted-journal
-
-![GUI](omarchyTheme.png)
+```bash
+git clone <repo-url> encrypted-journal
+cd encrypted-journal
+pip install -r requirements.txt
+python journal_tui.py
+```
 
 # Example JSON File Structure
 [
@@ -32,11 +31,26 @@ A cross-platform encrypted journal application built with Python, Tkinter, and t
     {"date": "2025-02-21", "entry": "another_base64_encoded_encrypted_data"}
 ]
 
+# Usage
+Key bindings:
+- `n` — new entry
+- `v` / `enter` — view/edit the selected entry
+- `d` — delete the selected entry (with a Yes/No confirmation)
+- `l` — lock now (clears the in-memory password, returns to the unlock screen)
+- `q` — quit
+- `ctrl+s` — save an entry
+- `escape` — cancel/discard and return to the entry list
+
+Session lock: `ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS` (default `300`, i.e. 5 minutes) sets an inactivity auto-lock. After that many seconds without a tracked action, the in-memory password is cleared; the next action that needs decryption re-prompts for the password in place, without discarding unsaved edits. The `l` key triggers the same lock manually, independent of the timer.
+
+Password rotation and spell checking are not implemented yet (see `TODO_PROD_READY.md`).
+
 # Smoke Test
-Run the local smoke test to verify core journal flows (save, load, delete, and password change):
+Run the local smoke tests to verify core journal flows and the TUI end-to-end:
 
 ```bash
-python scripts/smoke_test.py
+python scripts/core_smoke_test.py
+python scripts/tui_smoke_test.py
 ```
 
 # Storage + Keyring Options
@@ -50,28 +64,6 @@ Environment overrides:
 - `ENCRYPTED_JOURNAL_FILE=/custom/path/journal.json.gz` to force a specific file location.
 - `ENCRYPTED_JOURNAL_USE_KEYRING=1` to enable optional system keyring integration for remembered passwords.
 - `ENCRYPTED_JOURNAL_KEYRING_USER=<name>` to customize the keyring account key.
-
-# Textual TUI
-A terminal-first alternative frontend, `journal_tui.py`, built with [Textual](https://textual.textualize.io/). It coexists with the Tkinter GUI (`secure_journal.py`) rather than replacing it, and shares the same journal file, on-disk format, and encryption via `journal_core.py` — entries created in one frontend show up in the other. It respects the same `ENCRYPTED_JOURNAL_FILE`, `ENCRYPTED_JOURNAL_USE_KEYRING`, and `ENCRYPTED_JOURNAL_KEYRING_USER` env vars described above.
-
-Install the extra dependency, then launch it:
-```bash
-pip install -r requirements-tui.txt
-python journal_tui.py
-```
-
-Key bindings:
-- `n` — new entry
-- `v` / `enter` — view/edit the selected entry
-- `d` — delete the selected entry (with a Yes/No confirmation)
-- `l` — lock now (clears the in-memory password, returns to the unlock screen)
-- `q` — quit
-- `ctrl+s` — save an entry
-- `escape` — cancel/discard and return to the entry list
-
-Session lock: `ENCRYPTED_JOURNAL_TUI_LOCK_SECONDS` (default `300`, i.e. 5 minutes) sets an inactivity auto-lock. After that many seconds without a tracked action, the in-memory password is cleared; the next action that needs decryption re-prompts for the password in place, without discarding unsaved edits. The `l` key triggers the same lock manually, independent of the timer.
-
-Password rotation and spell checking are GUI-only for now; the TUI doesn't implement either yet.
 
 # Arch / Omarchy Packaging
 This repo includes Arch packaging files at `packaging/arch/` so the app can be published to AUR and discovered from Omarchy package search tools.
@@ -100,7 +92,7 @@ If you are new to GitHub pull requests, follow these steps to share your changes
    ```
 2. **Stage and commit your work** once it is ready:
    ```bash
-   git add secure_journal.py
+   git add journal_tui.py
    git commit -m "Describe your change"
    ```
 3. **Push the branch to GitHub**:
