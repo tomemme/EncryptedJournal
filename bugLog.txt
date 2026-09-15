@@ -47,6 +47,32 @@ Known gaps (left as-is on purpose):
   an isolated repro first (normal + hover state), then against the real
   app (main window, Settings dialog, and 3x repeated apply_omarchy_colors()
   calls simulating the live Omarchy-theme-file poll) - all hang-free.
+- [FIXED] Treeview column heading and both scrollbars also stayed
+  unthemed under Tk 9 (same family as the two fixes above) -
+  apply_omarchy_colors's heading/scrollbar recoloring was gated off for
+  the same reason (defining a new custom image element hangs Tk 9's event
+  loop; _tk_supports_image_style_overrides untouched, still gates that
+  specific path). Root cause for the heading specifically: Azure doesn't
+  define its own Treeview.Heading at all - it inherits Treeheading.cell
+  from whichever base theme it was cloned from, and that inherited
+  element exposes no "-background" option at all (confirmed empty via
+  `ttk::style element options`), unlike clam's own Treeheading.cell,
+  which does.
+  Fix (secure_journal.py, apply_omarchy_colors): on Tk 9, borrow just the
+  broken element from clam under a new name (same idiom as the two fixes
+  above) - Treeheading.cell for the heading, and Vertical/Horizontal
+  Scrollbar.trough+thumb for the scrollbars, per orientation - keeping
+  Azure's own layout shape/children otherwise (no clam arrow buttons
+  introduced, matching Azure's existing minimal flat scrollbar look).
+  Also corrected the scrollbar thumb's pre-existing style.configure to use
+  the accent color at rest (not just on "active"/hover) - the Tk-8 image
+  path has always painted the thumb a flat accent color unconditionally
+  (ignoring the "background"/state-map values entirely, since a static
+  image doesn't respond to widget state), so a bg-colored resting thumb
+  under the new Tk-9 path would have been a Tk-9-only visual regression,
+  not a faithful port. Verified via an isolated repro first, then against
+  the real app (with real entries, both themes, several toggles and
+  repeated apply_omarchy_colors() calls) - all hang-free.
 - [FIXED] Failed-attempt lockout (5 wrong passwords) was implemented
   independently in both frontends as two separately-maintained literals
   (SecureJournalApp.max_attempts in secure_journal.py,

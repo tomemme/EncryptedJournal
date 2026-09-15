@@ -896,11 +896,68 @@ class SecureJournalApp:
                         )
                     ],
                 )
+            else:
+                # Tk 9: same borrow-from-clam idiom as the treeview
+                # disclosure indicator and buttons, instead of the new
+                # custom image element above (confirmed to hang the event
+                # loop under Tk 9). Azure inherits its Treeheading.cell
+                # from the base theme it was cloned from, which exposes no
+                # "-background" option at all (verified: its element
+                # options list is empty) - unlike clam's own
+                # Treeheading.cell, which does. Only the fill (.cell)
+                # element is swapped; .border/.padding/.image/.text stay
+                # Azure's own, matching Azure's/clam's shared native
+                # layout shape (two siblings: .cell, then .border wrapping
+                # the rest) rather than the Tk-8 branch's fully custom
+                # nesting above.
+                try:
+                    style.element_create(
+                        "Fixed.Treeheading.cell", "from", "clam", "Treeheading.cell"
+                    )
+                except tk.TclError:
+                    pass
 
-            # Scrollbar styling
+                style.layout(
+                    "Treeview.Heading",
+                    [
+                        ("Fixed.Treeheading.cell", {"sticky": "nswe"}),
+                        (
+                            "Treeheading.border",
+                            {
+                                "sticky": "nswe",
+                                "children": [
+                                    (
+                                        "Treeheading.padding",
+                                        {
+                                            "sticky": "nswe",
+                                            "children": [
+                                                (
+                                                    "Treeheading.image",
+                                                    {"side": "right", "sticky": ""},
+                                                ),
+                                                (
+                                                    "Treeheading.text",
+                                                    {"sticky": "we"},
+                                                ),
+                                            ],
+                                        },
+                                    )
+                                ],
+                            },
+                        ),
+                    ],
+                )
+
+            # Scrollbar styling. background (thumb) is the accent color at
+            # rest, same as buttons/selection - not just on hover: on Tk 8,
+            # the thumb has always been a solid-accent baked image
+            # regardless of state (the "background"/"map" values below were
+            # only ever read by the trough, not the ignore-everything image
+            # thumb), so a bg-colored resting thumb here would be a Tk-9-only
+            # regression relative to how this has always actually looked.
             style.configure(
                 "Vertical.TScrollbar",
-                background=colors["bg"],
+                background=colors["accent"],
                 troughcolor=colors["bg"],
                 arrowcolor=colors["fg"],
                 bordercolor=colors["bg"],
@@ -908,12 +965,16 @@ class SecureJournalApp:
             )
             style.map(
                 "Vertical.TScrollbar",
-                background=[("active", colors["accent"])]
+                background=[
+                    ("active", accent_hover),
+                    ("pressed", accent_pressed),
+                    ("!disabled", colors["accent"]),
+                ]
             )
 
             style.configure(
                 "Horizontal.TScrollbar",
-                background=colors["bg"],
+                background=colors["accent"],
                 troughcolor=colors["bg"],
                 arrowcolor=colors["fg"],
                 bordercolor=colors["bg"],
@@ -921,7 +982,11 @@ class SecureJournalApp:
             )
             style.map(
                 "Horizontal.TScrollbar",
-                background=[("active", colors["accent"])]
+                background=[
+                    ("active", accent_hover),
+                    ("pressed", accent_pressed),
+                    ("!disabled", colors["accent"]),
+                ]
             )
 
             if self._tk_supports_image_style_overrides():
@@ -965,6 +1030,50 @@ class SecureJournalApp:
                     pass
 
                 for orientation, sticky in (("Vertical", "ns"), ("Horizontal", "ew")):
+                    style.layout(
+                        f"{orientation}.TScrollbar",
+                        [
+                            (
+                                trough_element_name,
+                                {
+                                    "sticky": sticky,
+                                    "children": [
+                                        (
+                                            thumb_element_name,
+                                            {"expand": "1", "sticky": "nswe"},
+                                        )
+                                    ],
+                                },
+                            )
+                        ],
+                    )
+            else:
+                # Tk 9: borrow-from-clam idiom again, per orientation (clam
+                # keeps separate Vertical.*/Horizontal.* trough+thumb
+                # elements, unlike the single shared pair the Tk-8 image
+                # branch above uses - a flat solid-color image doesn't
+                # care about orientation, but the borrowed elements are
+                # theme-native ones that do). Deliberately keeps Azure's
+                # own minimal trough+thumb-only layout shape (no separate
+                # up/down or left/right arrow elements, unlike clam's own
+                # native layout) so the flat, arrow-less look this app
+                # already has doesn't change - only the color
+                # configurability does.
+                for orientation, sticky in (("Vertical", "ns"), ("Horizontal", "ew")):
+                    trough_element_name = f"Fixed.{orientation}.Scrollbar.trough"
+                    thumb_element_name = f"Fixed.{orientation}.Scrollbar.thumb"
+                    try:
+                        style.element_create(
+                            trough_element_name, "from", "clam",
+                            f"{orientation}.Scrollbar.trough",
+                        )
+                        style.element_create(
+                            thumb_element_name, "from", "clam",
+                            f"{orientation}.Scrollbar.thumb",
+                        )
+                    except tk.TclError:
+                        pass
+
                     style.layout(
                         f"{orientation}.TScrollbar",
                         [
