@@ -73,6 +73,18 @@ Known gaps (left as-is on purpose):
   not a faithful port. Verified via an isolated repro first, then against
   the real app (with real entries, both themes, several toggles and
   repeated apply_omarchy_colors() calls) - all hang-free.
+  Follow-up: the Treeview.Heading recoloring above (both the working Tk-8
+  path and the Tk-9 borrow) was then deleted entirely - this app's tree
+  heading has no columns, no text, and no click/sort behavior
+  (heading("#0", text="") was the only thing ever done with it), so
+  "recolor it" first landed as background=bg + active(hover)=accent,
+  i.e. a bar that only visibly appeared while the mouse hovered over an
+  otherwise non-interactive row - correct per the code as configured, but
+  not a good design outcome now that it's actually rendering. Replaced
+  with `show="tree"` (hides the ttk Heading row outright) plus a static
+  2px accent-colored tk.Frame separator above the tree - a plain Tk
+  widget, not a ttk style, so it needs none of the Azure/Tk-9 element
+  plumbing at all. Scrollbar fix is unaffected/still in place.
 - [FIXED] Failed-attempt lockout (5 wrong passwords) was implemented
   independently in both frontends as two separately-maintained literals
   (SecureJournalApp.max_attempts in secure_journal.py,

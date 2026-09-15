@@ -484,8 +484,8 @@ class SecureJournalApp:
         return self._tk_major_version_cache
 
     def _tk_supports_image_style_overrides(self):
-        """Whether it's safe to override Button/Treeview.Heading/Scrollbar
-        ttk layouts with custom flat-color image elements (see
+        """Whether it's safe to override Button/Scrollbar ttk layouts with
+        custom flat-color image elements (see
         apply_omarchy_colors below).
 
         Azure's own layouts for these already use baked PNG images, so
@@ -817,136 +817,13 @@ class SecureJournalApp:
                 darkcolor=[("!selected", colors["bg"])],
             )
 
-            # Treeview heading (column headers)
-            style.configure(
-                "Omarchy.Treeview.Heading",
-                background=colors["bg"],
-                foreground=colors["fg"],
-                relief="flat"
-            )
-            style.map(
-                "Omarchy.Treeview.Heading",
-                background=[("active", accent_hover)],
-                foreground=[("active", colors["bg"])]
-            )
-
-            style.configure(
-                "Treeview.Heading",
-                background=colors["bg"],
-                foreground=colors["fg"],
-                relief="flat"
-            )
-            style.map(
-                "Treeview.Heading",
-                background=[("active", accent_hover)],
-                foreground=[("active", colors["bg"])]
-            )
-
-            if self._tk_supports_image_style_overrides():
-                # Same image-based-layout issue as buttons: Azure's
-                # Treeview.Heading layout draws Treeheading.cell/
-                # Treeheading.border PNG images, ignoring the plain
-                # background/foreground configured above. Swap in a flat
-                # bg-colored image, keeping the generic padding/image/text
-                # children so the column title and sort-indicator glyph
-                # still render normally.
-                if not hasattr(self, "_omarchy_heading_image"):
-                    self._omarchy_heading_image = tk.PhotoImage(width=2, height=2)
-                self._omarchy_heading_image.put(colors["bg"], to=(0, 0, 2, 2))
-
-                heading_element_name = "Omarchy.Treeheading.cell"
-                try:
-                    if heading_element_name not in style.element_names():
-                        style.element_create(
-                            heading_element_name,
-                            "image",
-                            self._omarchy_heading_image,
-                            border=0,
-                            sticky="nswe",
-                        )
-                except tk.TclError:
-                    pass
-
-                style.layout(
-                    "Treeview.Heading",
-                    [
-                        (
-                            heading_element_name,
-                            {
-                                "sticky": "nswe",
-                                "children": [
-                                    (
-                                        "Treeheading.padding",
-                                        {
-                                            "sticky": "nswe",
-                                            "children": [
-                                                (
-                                                    "Treeheading.image",
-                                                    {"side": "right", "sticky": ""},
-                                                ),
-                                                (
-                                                    "Treeheading.text",
-                                                    {"sticky": "we"},
-                                                ),
-                                            ],
-                                        },
-                                    )
-                                ],
-                            },
-                        )
-                    ],
-                )
-            else:
-                # Tk 9: same borrow-from-clam idiom as the treeview
-                # disclosure indicator and buttons, instead of the new
-                # custom image element above (confirmed to hang the event
-                # loop under Tk 9). Azure inherits its Treeheading.cell
-                # from the base theme it was cloned from, which exposes no
-                # "-background" option at all (verified: its element
-                # options list is empty) - unlike clam's own
-                # Treeheading.cell, which does. Only the fill (.cell)
-                # element is swapped; .border/.padding/.image/.text stay
-                # Azure's own, matching Azure's/clam's shared native
-                # layout shape (two siblings: .cell, then .border wrapping
-                # the rest) rather than the Tk-8 branch's fully custom
-                # nesting above.
-                try:
-                    style.element_create(
-                        "Fixed.Treeheading.cell", "from", "clam", "Treeheading.cell"
-                    )
-                except tk.TclError:
-                    pass
-
-                style.layout(
-                    "Treeview.Heading",
-                    [
-                        ("Fixed.Treeheading.cell", {"sticky": "nswe"}),
-                        (
-                            "Treeheading.border",
-                            {
-                                "sticky": "nswe",
-                                "children": [
-                                    (
-                                        "Treeheading.padding",
-                                        {
-                                            "sticky": "nswe",
-                                            "children": [
-                                                (
-                                                    "Treeheading.image",
-                                                    {"side": "right", "sticky": ""},
-                                                ),
-                                                (
-                                                    "Treeheading.text",
-                                                    {"sticky": "we"},
-                                                ),
-                                            ],
-                                        },
-                                    )
-                                ],
-                            },
-                        ),
-                    ],
-                )
+            # No Treeview.Heading styling: the journal tree has no columns
+            # and no clickable/sortable heading (see the static
+            # tree_header_accent separator set below instead, which needs
+            # none of Azure's/Tk 9's Heading-element quirks since it's a
+            # plain tk.Frame, not a ttk style).
+            if hasattr(self, "tree_header_accent"):
+                self.tree_header_accent.config(background=colors["accent"])
 
             # Scrollbar styling. background (thumb) is the accent color at
             # rest, same as buttons/selection - not just on hover: on Tk 8,
@@ -1137,7 +1014,6 @@ class SecureJournalApp:
 
             try:
                 self.treeview.configure(style="Omarchy.Treeview")
-                self.treeview.heading("#0", text="")
             except tk.TclError:
                 pass
 
@@ -1546,10 +1422,22 @@ class SecureJournalApp:
         self.tree_frame = ttk.Frame(self.tree_container, style="Omarchy.TFrame")
         self.tree_frame.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
 
+        # A plain, static accent-colored line in place of the tree's ttk
+        # Heading row - the tree has no columns and no clickable/sortable
+        # heading (see update_treeview: heading("#0", text="") is the only
+        # thing ever done with it), so a real Heading was just an empty
+        # strip that (before this fix) also depended on Azure/Tk-9-specific
+        # style plumbing for no functional benefit. Its color is kept in
+        # sync by apply_omarchy_colors, same as text_entry/date_entry.
+        self.tree_header_accent = tk.Frame(self.tree_frame, height=2, bd=0, highlightthickness=0)
+        self.tree_header_accent.pack(side=tk.TOP, fill=tk.X)
+
         scrollbar = ttk.Scrollbar(self.tree_frame, orient=tk.VERTICAL)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.treeview = ttk.Treeview(self.tree_frame, yscrollcommand=scrollbar.set)
+        self.treeview = ttk.Treeview(
+            self.tree_frame, yscrollcommand=scrollbar.set, show="tree"
+        )
         self.treeview.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
         self.treeview.bind("<<TreeviewSelect>>", self.on_treeview_select)
         scrollbar.config(command=self.treeview.yview)
