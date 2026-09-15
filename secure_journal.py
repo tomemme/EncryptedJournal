@@ -1193,7 +1193,10 @@ class SecureJournalApp:
 
     def _schedule_omarchy_theme_check(self):
         try:
-            self.root.after(5000, self._check_for_omarchy_theme_update)
+            # 1s, matching journal_tui.py's OMARCHY_THEME_POLL_INTERVAL -
+            # the check itself is just two os.path.getmtime() calls, cheap
+            # enough to poll this often (was 5s here previously).
+            self.root.after(1000, self._check_for_omarchy_theme_update)
         except Exception:
             pass
 

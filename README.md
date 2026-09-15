@@ -12,7 +12,7 @@ A cross-platform encrypted journal application built with Python and the `crypto
 - **Rotating-File Logging**: both frontends log to `<journal directory>/encrypted-journal.log` (512KB, 5 backups kept), overridable via `ENCRYPTED_JOURNAL_LOG_FILE`/`ENCRYPTED_JOURNAL_LOG_LEVEL`.
 - **Cross-Platform**: Works on Windows, macOS, and Linux with consistent file handling and permissions.
 - **Days Since Last Entry**: Displays the time since your last journal entry.
-- **Omarchy Theming**: On Omarchy, both frontends automatically match your current desktop theme's colors (the TUI polls every ~1s for live updates; the GUI checks every ~5s). Falls back to each frontend's own default theme when Omarchy isn't present.
+- **Omarchy Theming**: On Omarchy, both frontends automatically match your current desktop theme's colors (both poll every ~1s for live updates). Falls back to each frontend's own default theme when Omarchy isn't present.
 
 The TUI does not yet have its own screen for password rotation — that logic lives in `journal_core.py` today for the GUI to use, ready for the TUI to build on next (see `TODO_PROD_READY.md`).
 
